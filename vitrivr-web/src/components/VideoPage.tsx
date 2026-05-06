@@ -135,6 +135,20 @@ function videoNameFromUrl(url: string): string {
     }
 }
 
+function formatTimestamp(seconds: number): string {
+    const totalMs = Math.max(0, Math.round(seconds * 1000));
+    const hours = Math.floor(totalMs / 3_600_000);
+    const minutes = Math.floor((totalMs % 3_600_000) / 60_000);
+    const secs = Math.floor((totalMs % 60_000) / 1000);
+    const ms = totalMs % 1000;
+
+    return [
+        String(hours).padStart(2, "0"),
+        String(minutes).padStart(2, "0"),
+        `${String(secs).padStart(2, "0")}.${String(ms).padStart(3, "0")}`,
+    ].join(":");
+}
+
 
 function mapNeighbors(schema: string, resp: RetrievablesResponse): MediaItem[] {
     const list = resp.retrievables ?? [];
@@ -205,6 +219,7 @@ export default function VideoPage() {
     const start = item?.start ?? 0;
     // const end = item?.end ?? 0; // TODO remove
     const name = item?.name ?? (src ? videoNameFromUrl(src) : id ?? "");
+    const formattedStart = formatTimestamp(start);
 
     const currentVector = useMemo(() => {
         if (!id) return undefined;
@@ -257,6 +272,9 @@ export default function VideoPage() {
         };
 
         video.addEventListener("loadedmetadata", onLoaded);
+        if (video.readyState >= 1) {
+            onLoaded();
+    }
         return () => video.removeEventListener("loadedmetadata", onLoaded);
     }, [start]);
 
@@ -463,6 +481,22 @@ export default function VideoPage() {
                 preload="metadata"
                 style={{width: "100%", maxWidth: 960, borderRadius: 12, background: "#000"}}
             />
+            <div
+                style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 8,
+                    padding: "8px 12px",
+                    border: "1px solid #ddd",
+                    borderRadius: 10,
+                    background: "#fafafa",
+                    width: "fit-content",
+                }}
+            >
+                <strong>Starts at</strong>
+                <span>{formattedStart}</span>
+                <span style={{opacity: 0.65}}>({start.toFixed(3)} s)</span>
+            </div>
 
             <section style={{display: "grid", gap: 10}}>
                 <h3 style={{margin: 0, fontSize: 14, fontWeight: 600}}>Nearest neighbors</h3>

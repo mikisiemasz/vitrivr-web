@@ -1,6 +1,7 @@
 import {Routes, Route, Navigate} from "react-router-dom";
 import Layout from "./components/Layout";
 import {SearchCard} from "./components/SearchCard";
+import {FaceSearch} from "./components/FaceSearch";
 import VideoPage from "./components/VideoPage";
 import {SearchProvider} from "./state/SearchContext.tsx";
 import "./styles/styles.css"
@@ -9,6 +10,7 @@ function Home() {
     return (
         <div className="sc-page">
             <SearchCard/>
+            <FaceSearch/>
         </div>
     );
 }

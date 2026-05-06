@@ -4,6 +4,7 @@ export const SCHEMA = import.meta.env.VITE_VITRIVR_SCHEMA
 export const API_BASE = import.meta.env.VITE_VITRIVR_BASE_URL;
 export const THUMBNAIL_BASE = import.meta.env.VITE_THUMBNAIL_ORIGIN;
 export const MEDIA_BASE = import.meta.env.VITE_MEDIA_ORIGIN;
+export const MEDIA_PATH_PREFIX: string = import.meta.env.VITE_MEDIA_PATH_PREFIX ?? "";
 
 type TextInput = { type: "TEXT"; data: string };
 type FloatVectorInput = { type: "FLOATVECTOR"; data: number[] };
@@ -12,27 +13,33 @@ type Inputs = Record<string, Input>;
 type RawSchema = string | { name?: string; [key: string]: unknown };
 
 
-/**
- * Builds the thumbnail URL for a given segment or media id.
- *
- * The current implementation is tailored to the VBS 2026 thumbnail layout,
- * where thumbnails are stored in shard folders derived from the first two
- * characters of the raw id.
- * @param schema - Active vitrivr schema name
- * @param id - Segment or media identifier used to locate the thumbnail
- * @returns The absolute thumbnail URL, or an empty string if it cannot be built
- */
+// /**
+//  * Builds the thumbnail URL for a given segment or media id.
+//  *
+//  * The current implementation is tailored to the VBS 2026 thumbnail layout,
+//  * where thumbnails are stored in shard folders derived from the first two
+//  * characters of the raw id.
+//  * @param schema - Active vitrivr schema name
+//  * @param id - Segment or media identifier used to locate the thumbnail
+//  * @returns The absolute thumbnail URL, or an empty string if it cannot be built
+//  */
+// export function thumbnailUrl(schema: string, id: string): string {
+//     if (!THUMBNAIL_BASE) return "";
+
+//     const clean = (id ?? "").trim();
+//     if (!clean) return "";
+
+//     // shared folder = first 2 characters of the raw id
+//     const shard = clean.slice(0, 2);
+//     const encId = encodeURIComponent(clean);
+
+//     return `${THUMBNAIL_BASE}/vbs/${schema.toUpperCase()}/thumbnails/shards/${encodeURIComponent(shard)}/${encId}.jpg`;
+// }
 export function thumbnailUrl(schema: string, id: string): string {
     if (!THUMBNAIL_BASE) return "";
-
     const clean = (id ?? "").trim();
     if (!clean) return "";
-
-    // shared folder = first 2 characters of the raw id
-    const shard = clean.slice(0, 2);
-    const encId = encodeURIComponent(clean);
-
-    return `${THUMBNAIL_BASE}/vbs/${schema.toUpperCase()}/thumbnails/shards/${encodeURIComponent(shard)}/${encId}.jpg`;
+    return `${THUMBNAIL_BASE}/thumbnails/${encodeURIComponent(clean)}.jpg`;
 }
 
 
@@ -49,7 +56,8 @@ function basenameFromPath(p: string): string {
 }
 
 /**
- * Builds a public video URL from a source file path.
+ * Builds a public video URL from a source file path. 
+ * Changed
  *
  * @param schema - Active vitrivr schema name
  * @param filePath - Original file path descriptor from the backend
@@ -57,9 +65,15 @@ function basenameFromPath(p: string): string {
  */
 export function servedVideoUrl(schema: string, filePath: string): string {
     if (!MEDIA_BASE) return "";
-    const filename = basenameFromPath(filePath);
-    if (!filename) return "";
-    return new URL(`vbs/${schema.toUpperCase()}/videos/${encodeURIComponent(filename)}`, MEDIA_BASE).toString();
+    const normalized = filePath.replace(/\\/g, "/");
+    const prefix = MEDIA_PATH_PREFIX.replace(/\\/g, "/").replace(/\/?$/, "/");
+    const relative = prefix && normalized.startsWith(prefix)
+        ? normalized.slice(prefix.length)
+        : basenameFromPath(normalized);
+    if (!relative) return "";
+    const encodedPath = relative.split("/").map(encodeURIComponent).join("/");
+    const subpath = (import.meta.env.VITE_MEDIA_SUBPATH as string | undefined) ?? `vbs/${schema.toUpperCase()}/videos/`;
+    return new URL(`${subpath}${encodedPath}`, MEDIA_BASE).toString();
 }
 
 

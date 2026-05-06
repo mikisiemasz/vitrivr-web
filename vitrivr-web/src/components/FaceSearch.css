@@ -1,0 +1,93 @@
+.fs-container {
+    display: grid;
+    gap: var(--s-3);
+}
+
+.fs-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s-1);
+}
+
+.fs-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    padding: 3px 6px 3px 10px;
+    border-radius: 999px;
+    border: 1px solid var(--line-2);
+    background: var(--muted);
+    font-size: 13px;
+    transition: background 120ms, border-color 120ms;
+}
+
+.fs-chip--include {
+    background: #d1fae5;
+    border-color: #6ee7b7;
+}
+
+.fs-chip--exclude {
+    background: #fee2e2;
+    border-color: #fca5a5;
+}
+
+.fs-chip__label {
+    margin-right: 4px;
+}
+
+.fs-chip__btn {
+    width: 22px;
+    height: 22px;
+    border: none;
+    border-radius: 50%;
+    background: transparent;
+    cursor: pointer;
+    font-size: 14px;
+    line-height: 1;
+    color: var(--text-2);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 100ms;
+}
+
+.fs-chip__btn:hover {
+    background: rgba(0, 0, 0, 0.08);
+}
+
+.fs-chip__btn--remove {
+    color: var(--err);
+    font-size: 11px;
+}
+
+.fs-register {
+    padding: var(--s-3);
+    background: var(--muted);
+    border-radius: var(--rad-2);
+    border: 1px dashed var(--line-2);
+}
+
+.fs-input {
+    height: 40px;
+    padding: 0 10px;
+    border: 1px solid var(--line-2);
+    border-radius: var(--rad-2);
+    background: var(--surface);
+    color: var(--text);
+    min-width: 140px;
+    flex-shrink: 0;
+}
+
+.fs-input:focus {
+    outline: none;
+    box-shadow: var(--ring);
+    border-color: var(--brand);
+}
+
+.fs-file-label {
+    cursor: pointer;
+    max-width: 220px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}

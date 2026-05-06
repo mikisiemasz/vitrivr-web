@@ -36,7 +36,7 @@ assess the performance of multimedia retrieval systems.
 ## Project Structure
 
 ```
-frontend-vitrivr/
+vitrivr-web/
 ├── vitrivr-web/
 │   ├── public/
 │   ├── src/
@@ -59,16 +59,24 @@ frontend-vitrivr/
 1. **Navigate to the frontend directory**
 
 ```bash
-cd frontend-vitrivr
+cd vitrivr-web 
 ```
 
 2. **Create the .env file**
    In the .env file the address of the vitrivr-engine, DRES-server, etc. are saved.
 
+   For serving files from own server run python3 -m http.server <port> in the media folder
+   e.g. VITE_MEDIA_PATH_PREFIX=/pathtofolder/castle/
+
+    Also added subpath for media, to easily change for dev or competition structure
+    e.g. VITE_MEDIA_SUBPATH=media/
+
 ```bash
 VITE_VITRIVR_BASE_URL=http://<ip>:<port>
 VITE_MEDIA_ORIGIN=http://<ip>:<port>
 VITE_THUMBNAIL_ORIGIN=http://<ip>:<port>
+VITE_VITRIVR_BASE_URL=
+VITE_MEDIA_SUBPATH=media/
 VITE_DRES_BASE_URL=https://vbs.videobrowsing.org/
 VITE_DEBUG=0
 ```
