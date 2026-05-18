@@ -58,6 +58,7 @@ export type QueryBlockProps = {
     queryTypeItems: RadioOption<QueryType>[];
     emotionItems: DropdownItem[];
     schema: string;
+    faceGallery?: Record<string, number[]>;
 };
 
 const emotionTargetItems =
@@ -75,10 +76,12 @@ export default function QueryBlock({
                                        queryTypeItems,
                                        emotionItems,
                                        schema,
+                                       faceGallery,
                                    }: QueryBlockProps) {
     const isEmotion = block.modality === "emotions";
     const isTextQuery = block.queryType === "text";
     const isCLIP = block.modality === "clip";
+    const isFace = block.modality === "face";
     const upperSchema = (schema ?? "").toUpperCase();
     const restrictAudioAndEmotion = upperSchema === "LHE" || upperSchema === "MVK";
     const isOcrOrAsr = block.modality === "ocr" || block.modality === "asr";
@@ -224,7 +227,34 @@ export default function QueryBlock({
             </div>
 
             <div>
-                {(isTextQuery || isEmotion) ? (
+                {isFace ? (
+                    <div className="fs-chips">
+                        {Object.keys(faceGallery ?? {}).sort().map(name => {
+                            const inc = (block.faceInclude ?? []).includes(name);
+                            const exc = (block.faceExclude ?? []).includes(name);
+                            return (
+                                <div key={name} className={`fs-chip${inc ? " fs-chip--include" : ""}${exc ? " fs-chip--exclude" : ""}`}>
+                                    <span className="fs-chip__label">{name}</span>
+                                    <button className="fs-chip__btn" title="Include" onClick={() => {
+                                        const next = inc
+                                            ? (block.faceInclude ?? []).filter(n => n !== name)
+                                            : [...(block.faceInclude ?? []), name];
+                                        onChange({faceInclude: next, faceExclude: (block.faceExclude ?? []).filter(n => n !== name)});
+                                    }}>+</button>
+                                    <button className="fs-chip__btn" title="Exclude" onClick={() => {
+                                        const next = exc
+                                            ? (block.faceExclude ?? []).filter(n => n !== name)
+                                            : [...(block.faceExclude ?? []), name];
+                                        onChange({faceExclude: next, faceInclude: (block.faceInclude ?? []).filter(n => n !== name)});
+                                    }}>−</button>
+                                </div>
+                            );
+                        })}
+                        {Object.keys(faceGallery ?? {}).length === 0 && (
+                            <p style={{fontSize: 12, color: "#888"}}>No faces in gallery yet — add them in the Face Gallery panel.</p>
+                        )}
+                    </div>
+                ) : (isTextQuery || isEmotion) ? (
                     <Input
                         type="text"
                         value={block.textQuery}

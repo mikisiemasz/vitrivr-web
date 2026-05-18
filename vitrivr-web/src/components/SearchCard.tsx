@@ -56,6 +56,10 @@ import {
     buildSegmentMediaUrls,
     type VitrivrRetrievable
 } from "../lib/vitrivr.ts";
+import {
+    queryFaceVector, intersectMaps, subtractMaps, faceMapToMediaItems,
+    type FaceResultMap,
+} from "../lib/faceSearch.ts";
 import {retrieval} from "../vitirvr/api/client";
 import "./Results/Results.css"
 import Flash from "./QueryBuilderComponents/Flash.tsx";
@@ -71,9 +75,10 @@ import {uuid} from "../utils/uuid";
 const PAGE_SIZE = 100;
 const DEBUG = (import.meta.env.VITE_DEBUG ?? "").toString() === "1";
 const RAW_TRUNCATE = 100_000;
+const FACE_LIMIT = 500;
 
 type QueryType = Extract<BlockState['queryType'], string>;
-type Modality = "clip" | "emotions" | "ocr" | "asr";
+type Modality = "clip" | "emotions" | "ocr" | "asr" | "face";
 
 const queryTypeItems =
     [
@@ -120,6 +125,8 @@ export type BlockState = {
     queryType: "text" | "image";
     textQuery: string;
     file: File | null;
+    faceInclude?: string[];
+    faceExclude?: string[];
 };
 
 const modalityOptions =
@@ -128,6 +135,7 @@ const modalityOptions =
         {value: "emotions", label: "Emotions"},
         {value: "ocr", label: "OCR"},
         {value: "asr", label: "ASR"},
+        {value: "face", label: "Face"},
     ] as const satisfies RadioOption<Modality>[];
 
 const emotionItems: DropdownItem[] = [
@@ -333,6 +341,7 @@ export function SearchCard() {
         mediaFilter, setMediaFilter,
         raw, setRaw,
         setScrollY, scrollY, setVectorsById,
+        faceGallery,
     } = useSearch();
 
     useEffect(() => {
@@ -429,8 +438,11 @@ export function SearchCard() {
     }, [loading, filterOpen]);
 
     const onSearch = async () => {
+        const faceBlocks = blocks.filter(b => b.modality === "face");
+        const nonFaceBlocks = blocks.filter(b => b.modality !== "face");
+
         setVisibleCount(PAGE_SIZE);
-        for (const b of blocks) {
+        for (const b of nonFaceBlocks) {
             const isTextQuery = b.queryType === "text";
             const isEmotion = b.modality === "emotions";
             const needsText = isTextQuery || isEmotion;
@@ -455,6 +467,13 @@ export function SearchCard() {
             }
         }
 
+        for (const fb of faceBlocks) {
+            if (!fb.faceInclude?.length) {
+                setFlash({show: true, message: "Select at least one person to include in each face block."});
+                return;
+            }
+        }
+
         setLoading(true);
         setError(null);
         setItems([]);
@@ -466,7 +485,7 @@ export function SearchCard() {
         const restrict = upperSchema === "LHE" || upperSchema === "MVK";
 
         if (restrict) {
-            for (const b of blocks) {
+            for (const b of nonFaceBlocks) {
                 if (b.modality === "emotions" || b.modality === "asr") {
                     setFlash({show: true, message: `Schema ${upperSchema} does not support Emotions or ASR queries.`});
                     return;
@@ -476,64 +495,85 @@ export function SearchCard() {
 
 
         try {
-            let resp;
+            let faceFinalMap: FaceResultMap | null = null;
+            if (faceBlocks.length > 0) {
+                const allIncludeMaps: FaceResultMap[] = [];
+                const allExcludeMaps: FaceResultMap[] = [];
+                for (const fb of faceBlocks) {
+                    const inc = fb.faceInclude ?? [];
+                    const exc = fb.faceExclude ?? [];
+                    const [iMaps, eMaps] = await Promise.all([
+                        Promise.all(inc.map(n => queryFaceVector(faceGallery[n], schema, FACE_LIMIT))),
+                        Promise.all(exc.map(n => queryFaceVector(faceGallery[n], schema, FACE_LIMIT))),
+                    ]);
+                    allIncludeMaps.push(intersectMaps(iMaps));
+                    allExcludeMaps.push(...eMaps);
+                }
+                faceFinalMap = subtractMaps(intersectMaps(allIncludeMaps), allExcludeMaps);
+            }
 
-            if (blocks.length == 1) {
-                const b = blocks[0];
+            let media: MediaItem[] = [];
+            if (nonFaceBlocks.length > 0) {
+                let resp;
 
-                if (b.modality === "emotions") {
-                    const chosen = (b.emotion ?? "").trim();
-                    if (!chosen) {
-                        setFlash({show: true, message: "Please select an emotion."});
-                        return;
+                if (nonFaceBlocks.length == 1) {
+                    const b = nonFaceBlocks[0];
+
+                    if (b.modality === "emotions") {
+                        const chosen = (b.emotion ?? "").trim();
+                        if (!chosen) {
+                            setFlash({show: true, message: "Please select an emotion."});
+                            return;
+                        }
+                        const body = buildTextQuery("emotions", "", chosen, b.emotionTarget);
+                        console.log("Building emotions query")
+                        // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+                        // @ts-expect-error
+                        resp = await retrieval.postExecuteQuery(schema, body);
+
+                    } else if (b.queryType === "image") {
+                        const base64image = await fileToBase64(b.file);
+                        const body = buildTextQuery(b.modality, base64image);
+                        // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+                        // @ts-expect-error
+                        resp = await retrieval.postExecuteQuery(schema, body);
+
+                    } else {
+                        const body = buildTextQuery(b.modality.trim(), b.textQuery.trim());
+                        // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+                        // @ts-expect-error
+                        resp = await retrieval.postExecuteQuery(schema, body);
                     }
-                    const body = buildTextQuery("emotions", "", chosen, b.emotionTarget);
-                    console.log("Building emotions query")
-                    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-                    // @ts-expect-error
-                    resp = await retrieval.postExecuteQuery(schema, body);
-
-                } else if (b.queryType === "image") {
-                    const base64image = await fileToBase64(b.file);
-                    const body = buildTextQuery(b.modality, base64image);
-                    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-                    // @ts-expect-error
-                    resp = await retrieval.postExecuteQuery(schema, body);
 
                 } else {
-                    const body = buildTextQuery(b.modality.trim(), b.textQuery.trim());
+                    const body = buildTemporalQuery(nonFaceBlocks);
+                    console.log("creating temporal query");
+                    printVitrivrRequest(body);
                     // eslint-disable-next-line @typescript-eslint/ban-ts-comment
                     // @ts-expect-error
                     resp = await retrieval.postExecuteQuery(schema, body);
                 }
 
-            } else {
-                const body = buildTemporalQuery(blocks);
-                console.log("creating temporal query");
-                printVitrivrRequest(body);
-                // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-                // @ts-expect-error
-                resp = await retrieval.postExecuteQuery(schema, body);
+                const pretty = truncateJson(resp);
+                setRaw(pretty);
+                debugLog("query response (truncated)", pretty);
+                media = mediaFrom(schema, resp as RetrievablesResponse);
             }
 
-            const pretty = truncateJson(resp);
-            setRaw(pretty);
+            if (faceFinalMap && nonFaceBlocks.length > 0) {
+                const faceIds = new Set(faceFinalMap.keys());
+                media = media.filter(i => faceIds.has(i.id));
+            } else if (faceFinalMap) {
+                media = faceMapToMediaItems(schema, faceFinalMap).map(fi => ({
+                    id: fi.id, kind: "video" as const, name: fi.name,
+                    url: fi.url, thumbUrl: fi.thumbUrl, start: fi.start, end: fi.end,
+                }));
+            }
 
-            debugLog("query response (truncated)", pretty);
-
-            const media = mediaFrom(schema, resp as RetrievablesResponse);
-            const rawCount =
-                (resp as RetrievablesResponse)?.retrievables?.length ?? 0;
-
-            if (rawCount === 0) {
+            if (media.length === 0) {
                 setFlash({
                     show: true,
                     message: "No results found for this query.",
-                });
-            } else if (media.length === 0) {
-                setFlash({
-                    show: true,
-                    message: "Results were found, but none could be displayed.",
                 });
             }
 
@@ -625,6 +665,7 @@ export function SearchCard() {
                                         queryTypeItems={queryTypeItems}
                                         emotionItems={emotionItems}
                                         schema={schema}
+                                        faceGallery={faceGallery}
                                     />
                                 ))}
                             </div>
