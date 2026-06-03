@@ -359,6 +359,7 @@ export function SearchCard() {
 
     const [flash, setFlash] = useState<{ show: boolean; message: string }>({show: false, message: ""});
     const [loading, setLoading] = useState(false);
+    const [searchedFaceNames, setSearchedFaceNames] = useState<{include: string[]; exclude: string[]} | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [filterOpen, setFilterOpen] = useState(false);
     const {
@@ -404,6 +405,7 @@ export function SearchCard() {
         setItems([]);
         setRaw("");
         setVectorsById({}); // not sure if keep this
+        setSearchedFaceNames(null);
 
         setBlocks([makeBlockState()]);
 
@@ -472,7 +474,17 @@ export function SearchCard() {
                 setFlash({show: true, message: "Select at least one person to include in each face block."});
                 return;
             }
+            const incSet = new Set(fb.faceInclude ?? []);
+            const overlap = (fb.faceExclude ?? []).filter(n => incSet.has(n));
+            if (overlap.length > 0) {
+                setFlash({show: true, message: `'${overlap.join("', '")}' cannot be both included and excluded.`});
+                return;
+            }
         }
+
+        const allIncluded = [...new Set(faceBlocks.flatMap(fb => fb.faceInclude ?? []))];
+        const allExcluded = [...new Set(faceBlocks.flatMap(fb => fb.faceExclude ?? []))];
+        setSearchedFaceNames(faceBlocks.length > 0 ? {include: allIncluded, exclude: allExcluded} : null);
 
         setLoading(true);
         setError(null);
@@ -574,6 +586,11 @@ export function SearchCard() {
                 setFlash({
                     show: true,
                     message: "No results found for this query.",
+                });
+            } else if (media.length === 0) {
+                setFlash({
+                    show: true,
+                    message: "Results were found, but none could be displayed.",
                 });
             }
 
@@ -695,6 +712,16 @@ export function SearchCard() {
                             <div className="panel__head row-between">
                                 <div className="stack-xs">
                                     <h3 className="panel__title">Results</h3>
+                                    {searchedFaceNames && (
+                                        <p className="panel__subtitle">
+                                            {searchedFaceNames.include.length > 0 && (
+                                                <span>Including: <strong>{searchedFaceNames.include.join(", ")}</strong></span>
+                                            )}
+                                            {searchedFaceNames.exclude.length > 0 && (
+                                                <span style={{marginLeft: 8}}>Excluding: <strong>{searchedFaceNames.exclude.join(", ")}</strong></span>
+                                            )}
+                                        </p>
+                                    )}
                                 </div>
 
                                 <div style={{position: "relative"}}>

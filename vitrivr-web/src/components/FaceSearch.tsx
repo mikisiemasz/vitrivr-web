@@ -1,7 +1,7 @@
 "use client";
 import {useRef, useState} from "react";
 import {useSearch} from "../state/SearchContext.tsx";
-import {extractFaceEmbedding} from "../lib/faceSearch.ts";
+import {extractAveragedFaceEmbedding} from "../lib/faceSearch.ts";
 import Flash from "./QueryBuilderComponents/Flash.tsx";
 import "./FaceSearch.css";
 
@@ -10,7 +10,7 @@ export function FaceSearch() {
     const faceGallery = rawGallery ?? {};
 
     const [regName, setRegName] = useState("");
-    const [regFile, setRegFile] = useState<File | null>(null);
+    const [regFiles, setRegFiles] = useState<File[]>([]);
     const [registering, setRegistering] = useState(false);
     const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -31,16 +31,16 @@ export function FaceSearch() {
     async function onRegister() {
         const name = regName.trim();
         if (!name) { showFlash("Please enter a name."); return; }
-        if (!regFile) { showFlash("Please choose a face image."); return; }
+        if (regFiles.length === 0) { showFlash("Please choose at least one face image."); return; }
         if (faceGallery[name]) { showFlash(`'${name}' already exists — remove it first or choose a different name.`); return; }
 
         setRegistering(true);
         setFlash({show: false, message: "", kind: "info"});
         try {
-            const emb = await extractFaceEmbedding(regFile);
+            const emb = await extractAveragedFaceEmbedding(regFiles);
             setFaceGallery(prev => ({...prev, [name]: emb}));
             setRegName("");
-            setRegFile(null);
+            setRegFiles([]);
             if (fileInputRef.current) fileInputRef.current.value = "";
             showFlash(`'${name}' added to gallery.`, "success");
         } catch (err) {
@@ -89,19 +89,24 @@ export function FaceSearch() {
                                 onKeyDown={e => { if (e.key === "Enter") void onRegister(); }}
                             />
                             <label className="btn fs-file-label">
-                                {regFile ? regFile.name : "Choose image…"}
+                                {regFiles.length === 0
+                                    ? "Choose image(s)…"
+                                    : regFiles.length === 1
+                                        ? regFiles[0].name
+                                        : `${regFiles.length} images selected`}
                                 <input
                                     ref={fileInputRef}
                                     type="file"
                                     accept="image/*"
+                                    multiple
                                     style={{display: "none"}}
-                                    onChange={e => setRegFile(e.target.files?.[0] ?? null)}
+                                    onChange={e => setRegFiles(e.target.files ? Array.from(e.target.files) : [])}
                                 />
                             </label>
                             <button
                                 className="btn"
                                 onClick={() => void onRegister()}
-                                disabled={registering || !regFile || !regName.trim()}
+                                disabled={registering || regFiles.length === 0 || !regName.trim()}
                             >
                                 {registering ? "Extracting…" : "Add to gallery"}
                             </button>

@@ -1,8 +1,16 @@
 import {retrieval} from "../vitirvr/api/client";
-import {buildSegmentMediaUrls, type VitrivrRetrievable} from "./vitrivr";
+import {buildSegmentMediaUrls, thumbnailUrl, type VitrivrRetrievable} from "./vitrivr";
 
 export const FACE_SERVER_URL =
     (import.meta.env.VITE_FACE_SERVER_URL as string | undefined) ?? "http://127.0.0.1:8888";
+
+/**
+ * Minimum cosine-similarity score (0–1) for a face result to be kept.
+ * Results below this threshold are discarded before intersection / display.
+ * The value mirrors the standalone pipeline's SIMILARITY_THRESHOLD.
+ */
+export const FACE_SCORE_THRESHOLD =
+    parseFloat((import.meta.env.VITE_FACE_SCORE_THRESHOLD as string | undefined) ?? "0") || 0;
 
 async function fileToBase64DataUrl(file: File): Promise<string> {
     return new Promise((resolve, reject) => {
@@ -14,6 +22,33 @@ async function fileToBase64DataUrl(file: File): Promise<string> {
 }
 
 /**
+ * The per-face object returned by the updated Python server.
+ * Older server versions returned bare number[][] — both shapes are handled below.
+ */
+type FaceDetectionPayload = {
+    embedding: number[];
+    bbox: number[];   // [x1, y1, x2, y2]
+    score: number;
+};
+
+type RawFaceResponse = FaceDetectionPayload[] | number[][];
+
+/**
+ * Normalise the server response into a uniform list of [FaceDetectionPayload].
+ * Handles both the new rich format and the legacy flat-array format.
+ */
+function normaliseFaceResponse(raw: RawFaceResponse): FaceDetectionPayload[] {
+    if (!Array.isArray(raw) || raw.length === 0) return [];
+    const first = raw[0];
+    if (Array.isArray(first)) {
+        // Legacy: [[512 floats], ...]
+        return (raw as number[][]).map(emb => ({embedding: emb, bbox: [], score: 1}));
+    }
+    // New rich format: [{embedding, bbox, score}, ...]
+    return raw as FaceDetectionPayload[];
+}
+
+/**
  * Send a face image to the descriptor server and return a single normalized
  * 512-d embedding. Throws if 0 or >1 face is detected.
  */
@@ -22,8 +57,7 @@ export async function extractFaceEmbedding(file: File): Promise<number[]> {
     const form = new FormData();
     form.append("data", dataUrl);
 
-    //    const resp = await fetch(`${FACE_SERVER_URL}/extract/face_embedding`, {
-    // workaround not to add CORS headers to the face server during development, see vite.config.ts
+    // Proxy via Vite dev proxy to avoid CORS during development; see vite.config.ts
     const resp = await fetch(`/face-api/extract/face_embedding`, {
         method: "POST",
         body: form,
@@ -31,15 +65,50 @@ export async function extractFaceEmbedding(file: File): Promise<number[]> {
 
     if (!resp.ok) throw new Error(`Face server returned HTTP ${resp.status}`);
 
-    const embeddings = await resp.json() as number[][];
-    if (!Array.isArray(embeddings))
-        throw new Error("Unexpected response format from face server");
-    if (embeddings.length === 0)
-        throw new Error("No face detected in the image — try a clearer photo");
-    if (embeddings.length > 1)
-        throw new Error(`${embeddings.length} faces detected — use a photo with exactly one face`);
+    const raw = await resp.json() as RawFaceResponse;
+    const detections = normaliseFaceResponse(raw);
 
-    return embeddings[0];
+    if (detections.length === 0)
+        throw new Error("No face detected in the image — try a clearer photo");
+    if (detections.length > 1)
+        throw new Error(`${detections.length} faces detected — use a photo with exactly one face`);
+
+    return detections[0].embedding;
+}
+
+/**
+ * Send multiple face images and average their embeddings into one gallery entry.
+ * At least one image must contain exactly one detected face; images with 0 or
+ * multiple faces are silently skipped.
+ *
+ * @returns Averaged, normalized 512-d embedding.
+ * @throws  If no usable single-face image was found across all files.
+ */
+export async function extractAveragedFaceEmbedding(files: File[]): Promise<number[]> {
+    const collected: number[][] = [];
+
+    for (const file of files) {
+        try {
+            const emb = await extractFaceEmbedding(file);
+            collected.push(emb);
+        } catch {
+            // skip images with 0 or >1 faces
+        }
+    }
+
+    if (collected.length === 0)
+        throw new Error("None of the selected images contained exactly one face.");
+
+    const dim = collected[0].length;
+    const sum = new Array<number>(dim).fill(0);
+    for (const emb of collected) {
+        for (let i = 0; i < dim; i++) sum[i] += emb[i];
+    }
+    const mean = sum.map(v => v / collected.length);
+
+    // L2-normalise the mean
+    const norm = Math.sqrt(mean.reduce((a, x) => a + x * x, 0)) || 1;
+    return mean.map(x => x / norm);
 }
 
 export function buildFaceQuery(vector: number[], limit: number) {
@@ -104,15 +173,26 @@ function normalizeResponse(resp: unknown): FaceResultMap {
 
     for (const item of list) {
         const r = item as RawApiItem;
-        const id = r.id?.trim();
-        if (!id) continue;
+        const faceId = r.id?.trim();
+        if (!faceId) continue;
+
+        /* Key by parent SEGMENT id so intersection with CLIP / other modalities
+           (which key by segment id) lines up. Fall back to face id if no parent. */
+        const segmentId = (r.relationship?.partOf?.id ?? faceId).trim();
+        if (!segmentId) continue;
 
         const score = typeof r.score === "number" ? r.score
             : typeof r.score === "string" ? parseFloat(r.score) || 0
             : 0;
 
-        map.set(id, {
-            retrievableId: id,
+        if (score < FACE_SCORE_THRESHOLD) continue;
+
+        /* If multiple faces in the same segment match, keep the highest-scoring one. */
+        const existing = map.get(segmentId);
+        if (existing && existing.score >= score) continue;
+
+        map.set(segmentId, {
+            retrievableId: segmentId,
             score,
             startNs: pickScalarDescriptor(r, "time.start"),
             endNs: pickScalarDescriptor(r, "time.end"),
@@ -177,14 +257,19 @@ export function faceMapToMediaItems(schema: string, map: FaceResultMap): FaceMed
     const items: FaceMediaItem[] = [];
 
     for (const item of map.values()) {
-        const {url, thumbUrl, filename} = buildSegmentMediaUrls(schema, item.raw);
-        // console.log("[face] id:", item.retrievableId, "url:", url, "filePath:", item.raw.descriptors?.["file.path"], "parentPath:", item.raw.relationship?.partOf?.descriptors?.["file.path"]);
-        if (!url) continue;
+        /* Face results return FACE_DETECTION retrievables. The viewable segment is partOf.
+           Fall back to face id if partOf is missing, so we at least render something. */
+        const parent = item.raw.relationship?.partOf;
+        const segmentId = (parent?.id ?? item.retrievableId).trim();
+        const {url, thumbUrl, filename} = buildSegmentMediaUrls(
+            schema,
+            parent ? {...parent, id: segmentId} as VitrivrRetrievable : item.raw,
+        );
 
         items.push({
-            id: item.retrievableId,
+            id: segmentId,
             url,
-            thumbUrl,
+            thumbUrl: thumbUrl || thumbnailUrl(schema, segmentId),
             name: filename ?? "",
             start: item.startNs / 1_000_000_000,
             end: item.endNs / 1_000_000_000,

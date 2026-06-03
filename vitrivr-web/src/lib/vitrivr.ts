@@ -89,6 +89,8 @@ export type VitrivrRetrievable = {
     descriptors?: Record<string, unknown>;
     relationship?: {
         partOf?: {
+            id?: string;
+            type?: string;
             descriptors?: Record<string, unknown>;
         };
     };
@@ -597,5 +599,3 @@ function addSegmentToFileLookups(operations: Ops, inputOp: string) {
 
     return "filelookup" as const;
 }
-
-

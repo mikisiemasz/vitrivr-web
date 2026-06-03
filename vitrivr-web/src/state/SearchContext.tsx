@@ -78,12 +78,27 @@ export function SearchProvider({children, initial}: {
             return import.meta.env.VITE_VITRIVR_SCHEMA ?? "";
         }
     });
-    
     const setScrollY = (y: number) => _setScrollY(y);
     const [vectorsById, setVectorsById] = useState<Record<string, number[]>>({});
-    const [faceGallery, setFaceGallery] = useState<Record<string, number[]>>({});
+    const [faceGallery, setFaceGallery] = useState<Record<string, number[]>>(() => {
+        try {
+            const stored = localStorage.getItem("vitrivr_faceGallery");
+            return stored ? JSON.parse(stored) as Record<string, number[]> : {};
+        } catch {
+            return {};
+        }
+    });
 
-    // load pre-built gallery JSON if a URL is configured TODO: remove
+    // Persist gallery to localStorage whenever it changes
+    useEffect(() => {
+        try {
+            localStorage.setItem("vitrivr_faceGallery", JSON.stringify(faceGallery));
+        } catch {
+            // ignore quota / private-browsing errors
+        }
+    }, [faceGallery]);
+
+    // Load pre-built gallery JSON if a URL is configured; remote entries fill gaps only
     useEffect(() => {
         const galleryUrl = import.meta.env.VITE_GALLERY_URL as string | undefined;
         if (!galleryUrl) return;
@@ -92,13 +107,14 @@ export function SearchProvider({children, initial}: {
             .then(r => r.json())
             .then((data: unknown) => {
                 const people = (data as any)?.people ?? {};
-                const out: Record<string, number[]> = {};
+                const remote: Record<string, number[]> = {};
                 for (const [name, info] of Object.entries(people)) {
                     const emb = (info as any)?.embedding;
-                    if (Array.isArray(emb) && emb.length > 0) out[name] = emb as number[];
+                    if (Array.isArray(emb) && emb.length > 0) remote[name] = emb as number[];
                 }
-                setFaceGallery(out);
-                console.log(`[FaceGallery] Loaded ${Object.keys(out).length} person(s) from ${galleryUrl}`);
+                // Merge: remote is the base; locally registered persons take precedence
+                setFaceGallery(prev => ({...remote, ...prev}));
+                console.log(`[FaceGallery] Merged ${Object.keys(remote).length} person(s) from ${galleryUrl}`);
             })
             .catch(err => console.warn("[FaceGallery] Could not load gallery:", err));
     }, []);
