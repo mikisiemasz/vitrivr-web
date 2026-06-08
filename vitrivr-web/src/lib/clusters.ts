@@ -1,6 +1,16 @@
 import {API_BASE, SCHEMA} from "./vitrivr";
 
-const schema = () => (SCHEMA ?? "").trim() || "castle_new";//TODO: default castle remove?
+/* Read the active schema from the same source SchemaSelector writes to,
+   so switching the selector immediately reroutes cluster API calls. */
+const schema = () => {
+    try {
+        const fromStorage = (window.localStorage.getItem("vitrivr_schema") ?? "").trim();
+        if (fromStorage) return fromStorage;
+    } catch {
+        // localStorage may be unavailable (SSR, private mode); fall through.
+    }
+    return (SCHEMA ?? "").trim();
+};
 const base = () => `${API_BASE}/api/${schema()}/clusters`;
 
 export type ClusterRunSummary = {

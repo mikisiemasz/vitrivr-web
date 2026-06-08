@@ -12,8 +12,7 @@ import {
     type CoOccurrenceItem,
 } from "../../lib/clusters";
 import {thumbnailUrl} from "../../lib/vitrivr";
-
-const SCHEMA = (import.meta.env.VITE_VITRIVR_SCHEMA as string | undefined) ?? "castle_new";
+import {useSearch} from "../../state/SearchContext";
 
 type Props = {
     cluster: ClusterGalleryItem;
@@ -24,6 +23,7 @@ type Props = {
 type Tab = "segments" | "members" | "co";
 
 export function ClusterDetail({cluster, onClose, onChanged}: Props) {
+    const {schema: SCHEMA} = useSearch();
     const [tab, setTab] = useState<Tab>("segments");
     const [segments, setSegments] = useState<ClusterSegmentItem[]>([]);
     const [members, setMembers] = useState<ClusterMemberItem[]>([]);
@@ -38,10 +38,10 @@ export function ClusterDetail({cluster, onClose, onChanged}: Props) {
         setError(null);
         try {
             if (tab === "segments") {
-                const r = await getClusterSegments(cluster.clusterId, {limit: 200});
+                const r = await getClusterSegments(cluster.clusterId, {limit: 60});
                 setSegments(r.segments);
             } else if (tab === "members") {
-                const r = await getClusterMembers(cluster.clusterId, {limit: 200});
+                const r = await getClusterMembers(cluster.clusterId, {limit: 60});
                 setMembers(r.members);
                 setSelectedFaces(new Set());
             } else {

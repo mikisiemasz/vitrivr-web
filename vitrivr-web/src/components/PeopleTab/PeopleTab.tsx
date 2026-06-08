@@ -11,15 +11,14 @@ import {
 } from "../../lib/clusters";
 import {thumbnailUrl} from "../../lib/vitrivr";
 import {useSearch} from "../../state/SearchContext";
+import SchemaSelector from "../SchemaSelector";
 import {ClusterDetail} from "./ClusterDetail";
 import "./PeopleTab.css";
-
-const SCHEMA = (import.meta.env.VITE_VITRIVR_SCHEMA as string | undefined) ?? "castle";
 
 type SortOpt = NonNullable<ListClustersParams["sort"]>;
 
 export function PeopleTab() {
-    const {setFaceGallery} = useSearch();
+    const {schema, setSchema, setFaceGallery} = useSearch();
     const [items, setItems] = useState<ClusterGalleryItem[]>([]);
     const [total, setTotal] = useState(0);
     const [loading, setLoading] = useState(false);
@@ -137,7 +136,12 @@ export function PeopleTab() {
         <div className="pt-page">
             <header className="pt-header">
                 <h2 className="pt-title">People</h2>
-                <p className="pt-subtitle">{loading ? "Loading…" : `${filtered.length} of ${total} clusters`}</p>
+                <div style={{display: "flex", alignItems: "center", gap: 12}}>
+                    <SchemaSelector value={schema} onChange={setSchema}/>
+                    <p className="pt-subtitle" style={{margin: 0}}>
+                        {loading ? "Loading…" : `${filtered.length} of ${total} clusters`}
+                    </p>
+                </div>
             </header>
 
             <section className="pt-controls">
@@ -243,7 +247,7 @@ export function PeopleTab() {
                 {filtered.map(c => {
                     const firstExemplar = c.exemplars[0];
                     const thumb = firstExemplar?.parentId
-                        ? thumbnailUrl(SCHEMA, firstExemplar.parentId)
+                        ? thumbnailUrl(schema, firstExemplar.parentId)
                         : "";
                     const isSelected = selected.has(c.clusterId);
                     return (
