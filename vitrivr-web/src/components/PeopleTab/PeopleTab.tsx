@@ -13,7 +13,11 @@ import {thumbnailUrl} from "../../lib/vitrivr";
 import {useSearch} from "../../state/SearchContext";
 import SchemaSelector from "../SchemaSelector";
 import {ClusterDetail} from "./ClusterDetail";
+import {CoOccurrencePairsChart} from "./CoOccurrencePairsChart";
+import {CoOccurrenceNetwork} from "./CoOccurrenceNetwork";
 import "./PeopleTab.css";
+
+type RelationshipView = "pairs" | "network";
 
 type SortOpt = NonNullable<ListClustersParams["sort"]>;
 
@@ -34,6 +38,8 @@ export function PeopleTab() {
 
     /* clustering controls */
     const [showControls, setShowControls] = useState(false);
+    const [showRelationships, setShowRelationships] = useState(false);
+    const [relationshipView, setRelationshipView] = useState<RelationshipView>("pairs");
     const [minClusterSize, setMinClusterSize] = useState(5);
     const [minSamples, setMinSamples] = useState(3);
     const [exemplarCount, setExemplarCount] = useState(5);
@@ -182,6 +188,9 @@ export function PeopleTab() {
                     </label>
 
                     <button className="btn" onClick={() => void reload()} disabled={loading}>↻ Refresh</button>
+                    <button className="btn" onClick={() => setShowRelationships(s => !s)}>
+                        {showRelationships ? "Hide relationships" : "Relationships"}
+                    </button>
                     <button className="btn" onClick={() => setShowControls(s => !s)}>
                         {showControls ? "Hide" : "Re-cluster…"}
                     </button>
@@ -240,6 +249,27 @@ export function PeopleTab() {
                     </div>
                 )}
             </section>
+
+            {showRelationships && (
+                <section className="pt-cluster-controls">
+                    <div className="pt-row" style={{marginBottom: 8}}>
+                        <button
+                            className={relationshipView === "pairs" ? "btn btn-primary" : "btn"}
+                            onClick={() => setRelationshipView("pairs")}
+                        >Top pairs</button>
+                        <button
+                            className={relationshipView === "network" ? "btn btn-primary" : "btn"}
+                            onClick={() => setRelationshipView("network")}
+                        >Network</button>
+                    </div>
+                    {relationshipView === "pairs" && (
+                        <CoOccurrencePairsChart topN={20} minMembers={minMembers} minShared={2}/>
+                    )}
+                    {relationshipView === "network" && (
+                        <CoOccurrenceNetwork minMembers={minMembers} minShared={2}/>
+                    )}
+                </section>
+            )}
 
             {error && <div className="pt-error">{error}</div>}
 
