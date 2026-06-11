@@ -39,7 +39,11 @@ export function thumbnailUrl(schema: string, id: string): string {
     if (!THUMBNAIL_BASE) return "";
     const clean = (id ?? "").trim();
     if (!clean) return "";
-    return `${THUMBNAIL_BASE}/thumbnails/${encodeURIComponent(clean)}.jpg`;
+    /* Include schema in the path so a single media-http server serving the parent
+       data directory can route requests for multiple schemas thumbnails. */
+    const s = (schema ?? "").trim();
+    const schemaSeg = s ? `${encodeURIComponent(s)}/` : "";
+    return `${THUMBNAIL_BASE}/${schemaSeg}thumbnails/${encodeURIComponent(clean)}.jpg`;
 }
 
 
