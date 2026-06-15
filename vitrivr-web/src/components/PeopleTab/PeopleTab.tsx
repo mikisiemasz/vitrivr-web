@@ -15,9 +15,10 @@ import SchemaSelector from "../SchemaSelector";
 import {ClusterDetail} from "./ClusterDetail";
 import {CoOccurrencePairsChart} from "./CoOccurrencePairsChart";
 import {CoOccurrenceNetwork} from "./CoOccurrenceNetwork";
+import {GroupSizeHistogram} from "./GroupSizeHistogram";
 import "./PeopleTab.css";
 
-type RelationshipView = "pairs" | "network";
+type RelationshipView = "pairs" | "network" | "histogram";
 
 type SortOpt = NonNullable<ListClustersParams["sort"]>;
 
@@ -261,12 +262,19 @@ export function PeopleTab() {
                             className={relationshipView === "network" ? "btn btn-primary" : "btn"}
                             onClick={() => setRelationshipView("network")}
                         >Network</button>
+                        <button
+                            className={relationshipView === "histogram" ? "btn btn-primary" : "btn"}
+                            onClick={() => setRelationshipView("histogram")}
+                        >Group sizes</button>
                     </div>
                     {relationshipView === "pairs" && (
                         <CoOccurrencePairsChart topN={20} minMembers={minMembers} minShared={2}/>
                     )}
                     {relationshipView === "network" && (
                         <CoOccurrenceNetwork minMembers={minMembers} minShared={2}/>
+                    )}
+                    {relationshipView === "histogram" && (
+                        <GroupSizeHistogram/>
                     )}
                 </section>
             )}

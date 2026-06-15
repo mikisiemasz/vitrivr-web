@@ -6,7 +6,7 @@ import {
     Cell,
     ResponsiveContainer,
     Tooltip,
-    type TooltipProps,
+    type TooltipContentProps,
     XAxis,
     YAxis,
 } from "recharts";
@@ -43,7 +43,7 @@ function intensityColor(value: number, max: number): string {
     return `hsl(180 50% ${lightness}%)`;
 }
 
-function PairTooltip({active, payload}: TooltipProps<number, string>) {
+function PairTooltip({active, payload}: TooltipContentProps<number, string>) {
     if (!active || !payload?.length) return null;
     const row = payload[0].payload as PairItem;
     return (
@@ -171,7 +171,8 @@ export function CoOccurrencePairsChart({topN = 20, minMembers = 5, minShared = 2
                                 width={220}
                                 interval={0}
                             />
-                            <Tooltip content={<PairTooltip/>}/>
+                            {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
+                            <Tooltip content={(p: any) => <PairTooltip {...p}/>}/>
                             <Bar dataKey="sharedSegments">
                                 {data.map(d => (
                                     <Cell key={d.key} fill={intensityColor(d.sharedSegments, max)}/>

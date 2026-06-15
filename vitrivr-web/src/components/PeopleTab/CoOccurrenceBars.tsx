@@ -6,7 +6,7 @@ import {
     Cell,
     ResponsiveContainer,
     Tooltip,
-    type TooltipProps,
+    type TooltipContentProps,
     XAxis,
     YAxis,
 } from "recharts";
@@ -30,7 +30,7 @@ function partnerName(p: CoOccurrenceItem): string {
     return p.label?.trim() || `Cluster ${p.clusterId.slice(0, 6)}`;
 }
 
-function CoOccurrenceTooltip({active, payload}: TooltipProps<number, string>) {
+function CoOccurrenceTooltip({active, payload}: TooltipContentProps<number, string>) {
     if (!active || !payload?.length) return null;
     const row = payload[0].payload as CoOccurrenceItem & {name: string};
     return (
@@ -82,7 +82,8 @@ export function CoOccurrenceBars({partners, onSelect, topN = 15}: Props) {
                         width={140}
                         interval={0}
                     />
-                    <Tooltip content={<CoOccurrenceTooltip/>}/>
+                    {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
+                    <Tooltip content={(p: any) => <CoOccurrenceTooltip {...p}/>}/>
                     <Bar
                         dataKey="sharedSegments"
                         cursor={onSelect ? "pointer" : "default"}

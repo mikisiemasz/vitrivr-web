@@ -148,16 +148,35 @@ export function ClusterDetail({cluster, onClose, onChanged}: Props) {
                         <div className="pt-grid pt-grid--small">
                             {members.map(m => {
                                 const selected = selectedFaces.has(m.faceId);
+                                const bbox = m.bbox && m.bbox.length === 4 ? m.bbox : null;
                                 return (
                                     <button
                                         key={m.faceId}
                                         className={`pt-seg-card${selected ? " pt-seg-card--selected" : ""}`}
                                         onClick={() => toggleFace(m.faceId)}
                                         title={m.faceId}
+                                        style={{position: "relative"}}
                                     >
                                         {m.parentId
                                             ? <img src={thumbnailUrl(SCHEMA, m.parentId)} alt={m.faceId} loading="lazy"/>
                                             : <div className="pt-card__noimg">?</div>}
+                                        {bbox && (
+                                            <span
+                                                className="pt-face-bbox"
+                                                style={{
+                                                    position: "absolute",
+                                                    left:   `${bbox[0] * 100}%`,
+                                                    top:    `${bbox[1] * 100}%`,
+                                                    width:  `${Math.max(0, bbox[2] - bbox[0]) * 100}%`,
+                                                    height: `${Math.max(0, bbox[3] - bbox[1]) * 100}%`,
+                                                    border: "1px solid rgba(225, 29, 72, 0.75)",
+                                                    boxShadow: "none",
+                                                    pointerEvents: "none",
+                                                    boxSizing: "border-box",
+                                                }}
+                                                aria-hidden="true"
+                                            />
+                                        )}
                                     </button>
                                 );
                             })}

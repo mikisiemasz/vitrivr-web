@@ -57,7 +57,12 @@ export type ClusterSegmentPage = {
     segments: ClusterSegmentItem[];
 };
 
-export type ClusterMemberItem = { faceId: string; parentId?: string | null };
+export type ClusterMemberItem = {
+    faceId: string;
+    parentId?: string | null;
+    /** Normalized [x1, y1, x2, y2] in [0,1]^4 against the source frame. */
+    bbox?: number[] | null;
+};
 export type ClusterMemberPage = {
     clusterId: string;
     total: number;
@@ -143,6 +148,16 @@ export type ClusterCentroidResponse = { clusterId: string; embedding: number[] }
 
 export async function getClusterCentroid(clusterId: string): Promise<ClusterCentroidResponse> {
     return jsonOrThrow(await fetch(`${base()}/${encodeURIComponent(clusterId)}/centroid`));
+}
+
+export type GroupSizeBin = { k: number; segmentCount: number };
+export type GroupSizeHistogramResponse = {
+    totalSegments: number;
+    bins: GroupSizeBin[];
+};
+
+export async function getGroupSizeHistogram(): Promise<GroupSizeHistogramResponse> {
+    return jsonOrThrow(await fetch(`${base()}/stats/group-sizes`));
 }
 
 export async function getCoOccurrences(
