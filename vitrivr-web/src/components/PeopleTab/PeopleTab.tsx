@@ -100,7 +100,8 @@ export function PeopleTab() {
         try {
             const {embedding} = await getClusterCentroid(c.clusterId);
             const name = (c.label?.trim() || `Cluster ${c.clusterId.slice(0, 6)}`);
-            setFaceGallery(prev => ({...prev, [name]: embedding}));
+            /* Carry the clusterId so SearchCard can take the fast /clusters/match path. */
+            setFaceGallery(prev => ({...prev, [name]: {embedding, clusterId: c.clusterId}}));
             alert(`Added "${name}" to face gallery. Use it from the Query Builder face modality.`);
         } catch (e) {
             alert(`Add to gallery failed: ${e instanceof Error ? e.message : String(e)}`);

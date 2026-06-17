@@ -13,6 +13,45 @@ export type MediaItem = {
 
 type MediaFilter = { image: boolean; video: boolean; custom: boolean; uniqueVideos: boolean };
 
+/**
+ * One person in the face gallery.
+ * - `embedding`: the L2-normalised 512-d face vector (used for the ANN face retriever).
+ * - `clusterId`: present when the entry was added via the People tab's "+ Gallery" button.
+ *   When all chips in a face block have a clusterId, SearchCard takes a fast path through
+ *   the engine's `/clusters/match` endpoint instead of N parallel face-vector queries.
+ */
+export type GalleryEntry = {
+    embedding: number[];
+    clusterId?: string;
+};
+
+/** Accept either the legacy raw-array shape or the new object shape. */
+function normalizeGalleryEntry(raw: unknown): GalleryEntry | null {
+    if (Array.isArray(raw)) {
+        return raw.length > 0 ? {embedding: raw as number[]} : null;
+    }
+    if (raw && typeof raw === "object") {
+        const r = raw as Record<string, unknown>;
+        const emb = r.embedding;
+        if (Array.isArray(emb) && emb.length > 0) {
+            const cid = typeof r.clusterId === "string" ? r.clusterId : undefined;
+            return {embedding: emb as number[], clusterId: cid};
+        }
+    }
+    return null;
+}
+
+function normalizeGallery(raw: unknown): Record<string, GalleryEntry> {
+    const out: Record<string, GalleryEntry> = {};
+    if (raw && typeof raw === "object") {
+        for (const [name, val] of Object.entries(raw as Record<string, unknown>)) {
+            const entry = normalizeGalleryEntry(val);
+            if (entry) out[name] = entry;
+        }
+    }
+    return out;
+}
+
 type SearchState = {
     schema: string;
     setSchema: (s: string) => void;
@@ -35,8 +74,8 @@ type SearchState = {
     vectorsById: Record<string, number[]>;
     setVectorsById: React.Dispatch<React.SetStateAction<Record<string, number[]>>>;
 
-    faceGallery: Record<string, number[]>;
-    setFaceGallery: React.Dispatch<React.SetStateAction<Record<string, number[]>>>;
+    faceGallery: Record<string, GalleryEntry>;
+    setFaceGallery: React.Dispatch<React.SetStateAction<Record<string, GalleryEntry>>>;
 };
 
 const SearchCtx = createContext<SearchState | null>(null);
@@ -80,10 +119,10 @@ export function SearchProvider({children, initial}: {
     });
     const setScrollY = (y: number) => _setScrollY(y);
     const [vectorsById, setVectorsById] = useState<Record<string, number[]>>({});
-    const [faceGallery, setFaceGallery] = useState<Record<string, number[]>>(() => {
+    const [faceGallery, setFaceGallery] = useState<Record<string, GalleryEntry>>(() => {
         try {
             const stored = localStorage.getItem("vitrivr_faceGallery");
-            return stored ? JSON.parse(stored) as Record<string, number[]> : {};
+            return stored ? normalizeGallery(JSON.parse(stored)) : {};
         } catch {
             return {};
         }
@@ -107,11 +146,7 @@ export function SearchProvider({children, initial}: {
             .then(r => r.json())
             .then((data: unknown) => {
                 const people = (data as any)?.people ?? {};
-                const remote: Record<string, number[]> = {};
-                for (const [name, info] of Object.entries(people)) {
-                    const emb = (info as any)?.embedding;
-                    if (Array.isArray(emb) && emb.length > 0) remote[name] = emb as number[];
-                }
+                const remote = normalizeGallery(people);
                 // Merge: remote is the base; locally registered persons take precedence
                 setFaceGallery(prev => ({...remote, ...prev}));
                 console.log(`[FaceGallery] Merged ${Object.keys(remote).length} person(s) from ${galleryUrl}`);

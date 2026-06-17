@@ -160,6 +160,43 @@ export async function getGroupSizeHistogram(): Promise<GroupSizeHistogramRespons
     return jsonOrThrow(await fetch(`${base()}/stats/group-sizes`));
 }
 
+/**
+ * Server-side AND-intersection of cluster memberships, with optional spatial ordering.
+ * Replaces the multi-query intersection the frontend used to do for face blocks where
+ * every chip carries a clusterId.
+ */
+export type ClusterMatchRequest = {
+    include?: string[];
+    exclude?: string[];
+    spatialOrder?: string[];
+    axis?: "x" | "y";
+    limit?: number;
+};
+
+export type ClusterMatchHit = {
+    segmentId: string;
+    score: number;
+    sourceId?: string | null;
+    filePath?: string | null;
+    startNs?: number | null;
+    endNs?: number | null;
+};
+
+export type ClusterMatchResponse = {
+    total: number;
+    limit: number;
+    results: ClusterMatchHit[];
+};
+
+export async function matchClusters(req: ClusterMatchRequest): Promise<ClusterMatchResponse> {
+    const r = await fetch(`${base()}/match`, {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify(req),
+    });
+    return jsonOrThrow(r);
+}
+
 export async function getCoOccurrences(
     clusterId: string,
     p: {limit?: number; minShared?: number} = {},

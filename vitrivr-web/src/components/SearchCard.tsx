@@ -56,6 +56,7 @@ import {
     buildSegmentMediaUrls,
     type VitrivrRetrievable
 } from "../lib/vitrivr.ts";
+import {matchClusters} from "../lib/clusters";
 import {
     queryFaceVector, intersectMaps, subtractMaps, faceMapToMediaItems,
     type FaceResultMap,
@@ -127,6 +128,7 @@ export type BlockState = {
     file: File | null;
     faceInclude?: string[];
     faceExclude?: string[];
+    faceSpatial?: boolean;
 };
 
 const modalityOptions =
@@ -159,13 +161,17 @@ const makeBlockState = (): BlockState => ({
 });
 
 function videoDedupeKey(item: MediaItem): string {
+    /* When url is missing (e.g. face fast-path returns only segment ids), the URL-based key
+       collapses to "" for every item — every result then dedupes away. Fall back to the
+       segment id so distinct segments survive. */
+    if (!item.url) return item.id;
     try {
         const u = new URL(item.url);
         const parts = u.pathname.split("/");
-        return parts[parts.length - 1] ?? item.id;
+        return parts[parts.length - 1] || item.id;
     } catch {
         const parts = (item.url ?? "").split("/");
-        return parts[parts.length - 1] ?? item.id;
+        return parts[parts.length - 1] || item.id;
     }
 }
 
@@ -509,19 +515,56 @@ export function SearchCard() {
         try {
             let faceFinalMap: FaceResultMap | null = null;
             if (faceBlocks.length > 0) {
-                const allIncludeMaps: FaceResultMap[] = [];
-                const allExcludeMaps: FaceResultMap[] = [];
+                const blockMaps: FaceResultMap[] = [];
                 for (const fb of faceBlocks) {
                     const inc = fb.faceInclude ?? [];
                     const exc = fb.faceExclude ?? [];
-                    const [iMaps, eMaps] = await Promise.all([
-                        Promise.all(inc.map(n => queryFaceVector(faceGallery[n], schema, FACE_LIMIT))),
-                        Promise.all(exc.map(n => queryFaceVector(faceGallery[n], schema, FACE_LIMIT))),
-                    ]);
-                    allIncludeMaps.push(intersectMaps(iMaps));
-                    allExcludeMaps.push(...eMaps);
+
+                    const incCids = inc.map(n => faceGallery[n]?.clusterId);
+                    const excCids = exc.map(n => faceGallery[n]?.clusterId);
+                    const allHaveClusterIds =
+                        incCids.every((c): c is string => !!c) &&
+                        excCids.every((c): c is string => !!c);
+
+                    if (allHaveClusterIds && inc.length > 0) {
+                        const resp = await matchClusters({
+                            include: incCids as string[],
+                            exclude: excCids as string[],
+                            spatialOrder: (fb.faceSpatial && inc.length >= 2)
+                                ? incCids as string[]
+                                : undefined,
+                            axis: "x",
+                            limit: 1000,
+                        });
+                        const map: FaceResultMap = new Map();
+                        for (const hit of resp.results) {
+                            const raw: VitrivrRetrievable = {
+                                id: hit.segmentId,
+                                type: "SEGMENT",
+                                descriptors: hit.filePath ? {"file.path": hit.filePath} : undefined,
+                            };
+                            map.set(hit.segmentId, {
+                                retrievableId: hit.segmentId,
+                                score: hit.score,
+                                startNs: hit.startNs ?? 0,
+                                endNs: hit.endNs ?? 0,
+                                raw,
+                            });
+                        }
+                        blockMaps.push(map);
+                        console.log(
+                            `[Search] face fast-path${fb.faceSpatial ? " (spatial)" : ""}:` +
+                            ` ${resp.results.length}/${resp.total} segments`
+                        );
+                    } else {
+                        const [iMaps, eMaps] = await Promise.all([
+                            Promise.all(inc.map(n => queryFaceVector(faceGallery[n].embedding, schema, FACE_LIMIT))),
+                            Promise.all(exc.map(n => queryFaceVector(faceGallery[n].embedding, schema, FACE_LIMIT))),
+                        ]);
+                        blockMaps.push(subtractMaps(intersectMaps(iMaps), eMaps));
+                    }
                 }
-                faceFinalMap = subtractMaps(intersectMaps(allIncludeMaps), allExcludeMaps);
+                faceFinalMap = intersectMaps(blockMaps);
             }
 
             let media: MediaItem[] = [];

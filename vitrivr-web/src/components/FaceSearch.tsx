@@ -38,7 +38,8 @@ export function FaceSearch() {
         setFlash({show: false, message: "", kind: "info"});
         try {
             const emb = await extractAveragedFaceEmbedding(regFiles);
-            setFaceGallery(prev => ({...prev, [name]: emb}));
+            /* Manually uploaded face: no clusterId, just the embedding. */
+            setFaceGallery(prev => ({...prev, [name]: {embedding: emb}}));
             setRegName("");
             setRegFiles([]);
             if (fileInputRef.current) fileInputRef.current.value = "";

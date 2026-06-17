@@ -45,6 +45,22 @@ import Dropdown, {type DropdownItem} from "./Dropdown.tsx";
 import Input from "./Input.tsx";
 //import FileUploader from "./FileUploader.tsx"; // was removed because of the VBS
 import type {BlockState} from "../SearchCard.tsx";
+import type {GalleryEntry} from "../../state/SearchContext.tsx";
+import {
+    DndContext,
+    PointerSensor,
+    closestCenter,
+    useSensor,
+    useSensors,
+    type DragEndEvent,
+} from "@dnd-kit/core";
+import {
+    SortableContext,
+    arrayMove,
+    horizontalListSortingStrategy,
+    useSortable,
+} from "@dnd-kit/sortable";
+import {CSS} from "@dnd-kit/utilities";
 
 type QueryType = Extract<BlockState['queryType'], string>;
 type Modality = Extract<BlockState["modality"], string>;
@@ -58,8 +74,32 @@ export type QueryBlockProps = {
     queryTypeItems: RadioOption<QueryType>[];
     emotionItems: DropdownItem[];
     schema: string;
-    faceGallery?: Record<string, number[]>;
+    faceGallery?: Record<string, GalleryEntry>;
 };
+
+/** One draggable include-chip for the spatial-ordering view. */
+function SortableIncludeChip({name, onRemove}: {name: string; onRemove: () => void}) {
+    const {attributes, listeners, setNodeRef, transform, transition, isDragging} = useSortable({id: name});
+    const style: React.CSSProperties = {
+        transform: CSS.Transform.toString(transform),
+        transition,
+        opacity: isDragging ? 0.6 : 1,
+        cursor: "grab",
+        userSelect: "none",
+    };
+    return (
+        <div ref={setNodeRef} style={style} {...attributes} {...listeners}
+             className="fs-chip fs-chip--include">
+            <span className="fs-chip__label">⋮⋮ {name}</span>
+            <button
+                className="fs-chip__btn"
+                title="Remove from order"
+                onPointerDown={e => e.stopPropagation()}
+                onClick={e => { e.stopPropagation(); onRemove(); }}
+            >×</button>
+        </div>
+    );
+}
 
 const emotionTargetItems =
     [
@@ -228,32 +268,11 @@ export default function QueryBlock({
 
             <div>
                 {isFace ? (
-                    <div className="fs-chips">
-                        {Object.keys(faceGallery ?? {}).sort().map(name => {
-                            const inc = (block.faceInclude ?? []).includes(name);
-                            const exc = (block.faceExclude ?? []).includes(name);
-                            return (
-                                <div key={name} className={`fs-chip${inc ? " fs-chip--include" : ""}${exc ? " fs-chip--exclude" : ""}`}>
-                                    <span className="fs-chip__label">{name}</span>
-                                    <button className="fs-chip__btn" title="Include" onClick={() => {
-                                        const next = inc
-                                            ? (block.faceInclude ?? []).filter(n => n !== name)
-                                            : [...(block.faceInclude ?? []), name];
-                                        onChange({faceInclude: next, faceExclude: (block.faceExclude ?? []).filter(n => n !== name)});
-                                    }}>+</button>
-                                    <button className="fs-chip__btn" title="Exclude" onClick={() => {
-                                        const next = exc
-                                            ? (block.faceExclude ?? []).filter(n => n !== name)
-                                            : [...(block.faceExclude ?? []), name];
-                                        onChange({faceExclude: next, faceInclude: (block.faceInclude ?? []).filter(n => n !== name)});
-                                    }}>−</button>
-                                </div>
-                            );
-                        })}
-                        {Object.keys(faceGallery ?? {}).length === 0 && (
-                            <p style={{fontSize: 12, color: "#888"}}>No faces in gallery yet — add them in the Face Gallery panel.</p>
-                        )}
-                    </div>
+                    <FaceBlockChips
+                        block={block}
+                        onChange={onChange}
+                        faceGallery={faceGallery ?? {}}
+                    />
                 ) : (isTextQuery || isEmotion) ? (
                     <Input
                         type="text"
@@ -267,6 +286,134 @@ export default function QueryBlock({
                         onImageChange={(file) => onChange({file})}
                         className=""
                     />
+                )}
+            </div>
+        </div>
+    );
+}
+
+/**
+ * Face-modality chip selector.
+ *
+ * - Always shows every gallery person as a clickable chip with +/- include/exclude buttons.
+ * - When "ordered left→right" is on AND there are 2+ included chips:
+ *     • Included chips appear in a separate horizontal sortable row above the gallery,
+ *       reflecting the spatial order that will be sent to /clusters/match.
+ *     • Dragging them rewrites `block.faceInclude` in the new order.
+ * - The toggle is only enabled when every currently-included chip carries a clusterId
+ *   (i.e. came from the People tab "+ Gallery" button). Otherwise it shows a hint.
+ */
+function FaceBlockChips({block, onChange, faceGallery}: {
+    block: BlockState;
+    onChange: (patch: Partial<BlockState>) => void;
+    faceGallery: Record<string, GalleryEntry>;
+}) {
+    const sensors = useSensors(useSensor(PointerSensor, {activationConstraint: {distance: 5}}));
+
+    const include = block.faceInclude ?? [];
+    const exclude = block.faceExclude ?? [];
+    const includeSet = new Set(include);
+    const excludeSet = new Set(exclude);
+
+    const allIncludesAreClusters = include.every(n => !!faceGallery[n]?.clusterId);
+    const canSpatial = allIncludesAreClusters && include.length >= 2;
+    const spatialActive = !!block.faceSpatial && canSpatial;
+
+    function setInclude(next: string[]) {
+        onChange({faceInclude: next});
+    }
+    function setExclude(next: string[]) {
+        onChange({faceExclude: next});
+    }
+    function toggleInclude(name: string) {
+        const has = includeSet.has(name);
+        setInclude(has ? include.filter(n => n !== name) : [...include, name]);
+        if (!has && excludeSet.has(name)) setExclude(exclude.filter(n => n !== name));
+    }
+    function toggleExclude(name: string) {
+        const has = excludeSet.has(name);
+        setExclude(has ? exclude.filter(n => n !== name) : [...exclude, name]);
+        if (!has && includeSet.has(name)) setInclude(include.filter(n => n !== name));
+    }
+    function onDragEnd(e: DragEndEvent) {
+        const {active, over} = e;
+        if (!over || active.id === over.id) return;
+        const oldIdx = include.indexOf(String(active.id));
+        const newIdx = include.indexOf(String(over.id));
+        if (oldIdx < 0 || newIdx < 0) return;
+        setInclude(arrayMove(include, oldIdx, newIdx));
+    }
+
+    const galleryNames = Object.keys(faceGallery).sort();
+
+    return (
+        <div>
+            {/* Spatial-ordering toggle */}
+            <label
+                style={{display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "#666", marginBottom: 8}}
+                title={canSpatial
+                    ? "Match segments where the included people appear in this left→right order."
+                    : "Add ≥2 included chips that were added via the People tab \"+ Gallery\" button to enable."}
+            >
+                <input
+                    type="checkbox"
+                    checked={spatialActive}
+                    disabled={!canSpatial}
+                    onChange={e => onChange({faceSpatial: e.target.checked})}
+                />
+                ordered left → right
+                {!canSpatial && include.length > 0 && !allIncludesAreClusters && (
+                    <span style={{color: "#b45309"}}>
+                        — disabled: some included faces aren't clusters
+                    </span>
+                )}
+            </label>
+
+            {/* Spatial-active: show ordered, draggable include row */}
+            {spatialActive && (
+                <div style={{
+                    marginBottom: 10, padding: "6px 8px",
+                    background: "#f6f6f6", borderRadius: 8,
+                }}>
+                    <p style={{fontSize: 11, color: "#888", marginBottom: 6}}>
+                        Drag to reorder
+                    </p>
+                    <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
+                        <SortableContext items={include} strategy={horizontalListSortingStrategy}>
+                            <div className="fs-chips" style={{flexWrap: "wrap"}}>
+                                {include.map(name => (
+                                    <SortableIncludeChip
+                                        key={name}
+                                        name={name}
+                                        onRemove={() => toggleInclude(name)}
+                                    />
+                                ))}
+                            </div>
+                        </SortableContext>
+                    </DndContext>
+                </div>
+            )}
+
+            {/* Standard gallery chips */}
+            <div className="fs-chips">
+                {galleryNames.map(name => {
+                    const inc = includeSet.has(name);
+                    const exc = excludeSet.has(name);
+                    /* When spatial is on, included chips live in the sortable row above —
+                       hide them from this list to avoid double-rendering. */
+                    if (spatialActive && inc) return null;
+                    return (
+                        <div key={name} className={`fs-chip${inc ? " fs-chip--include" : ""}${exc ? " fs-chip--exclude" : ""}`}>
+                            <span className="fs-chip__label">{name}</span>
+                            <button className="fs-chip__btn" title="Include" onClick={() => toggleInclude(name)}>+</button>
+                            <button className="fs-chip__btn" title="Exclude" onClick={() => toggleExclude(name)}>−</button>
+                        </div>
+                    );
+                })}
+                {galleryNames.length === 0 && (
+                    <p style={{fontSize: 12, color: "#888"}}>
+                        No faces in gallery yet — add them in the Face Gallery panel.
+                    </p>
                 )}
             </div>
         </div>
