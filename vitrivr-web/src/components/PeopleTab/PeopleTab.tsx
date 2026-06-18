@@ -13,6 +13,7 @@ import {thumbnailUrl} from "../../lib/vitrivr";
 import {useSearch} from "../../state/SearchContext";
 import SchemaSelector from "../SchemaSelector";
 import {ClusterDetail} from "./ClusterDetail";
+import {ClusterIdentifyPanel} from "./ClusterIdentifyPanel";
 import {CoOccurrencePairsChart} from "./CoOccurrencePairsChart";
 import {CoOccurrenceNetwork} from "./CoOccurrenceNetwork";
 import {GroupSizeHistogram} from "./GroupSizeHistogram";
@@ -40,6 +41,7 @@ export function PeopleTab() {
     /* clustering controls */
     const [showControls, setShowControls] = useState(false);
     const [showRelationships, setShowRelationships] = useState(false);
+    const [showIdentify, setShowIdentify] = useState(false);
     const [relationshipView, setRelationshipView] = useState<RelationshipView>("pairs");
     const [minClusterSize, setMinClusterSize] = useState(5);
     const [minSamples, setMinSamples] = useState(3);
@@ -190,6 +192,9 @@ export function PeopleTab() {
                     </label>
 
                     <button className="btn" onClick={() => void reload()} disabled={loading}>↻ Refresh</button>
+                    <button className="btn" onClick={() => setShowIdentify(s => !s)}>
+                        {showIdentify ? "Hide identify" : "Identify…"}
+                    </button>
                     <button className="btn" onClick={() => setShowRelationships(s => !s)}>
                         {showRelationships ? "Hide relationships" : "Relationships"}
                     </button>
@@ -251,6 +256,10 @@ export function PeopleTab() {
                     </div>
                 )}
             </section>
+
+            {showIdentify && (
+                <ClusterIdentifyPanel/>
+            )}
 
             {showRelationships && (
                 <section className="pt-cluster-controls">

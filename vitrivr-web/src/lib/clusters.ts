@@ -29,7 +29,11 @@ export type ClusterRunSummary = {
     status: string;
 };
 
-export type ClusterExemplar = { faceId: string; parentId?: string | null };
+export type ClusterExemplar = {
+    faceId: string;
+    parentId?: string | null;
+    bbox?: number[] | null;
+};
 
 export type ClusterGalleryItem = {
     clusterId: string;
@@ -195,6 +199,87 @@ export async function matchClusters(req: ClusterMatchRequest): Promise<ClusterMa
         body: JSON.stringify(req),
     });
     return jsonOrThrow(r);
+}
+
+/**
+ * Photo → cluster identification: turns a manually uploaded face into a *label* on an existing
+ * cluster, so the resulting gallery entry can take the fast `/clusters/match` path instead of
+ * the per-face ANN fallback.
+ *
+ * The frontend extracts the embedding via the same face model used during ingestion, then asks
+ * the engine which clusters have the most similar centroid. Cosine similarity; both vectors are
+ * assumed L2-normalized but the server renormalizes the query defensively.
+ */
+export type ClusterIdentifyRequest = {
+    embedding: number[];
+    /** Min cosine similarity. Defaults server-side to 0.5. */
+    threshold?: number;
+    /** Max matches to return after thresholding. Defaults server-side to 5. */
+    topK?: number;
+};
+
+export type ClusterIdentifyMatch = {
+    clusterId: string;
+    similarity: number;
+    label?: string | null;
+};
+
+export type ClusterIdentifyResponse = {
+    totalClusters: number;
+    matches: ClusterIdentifyMatch[];
+};
+
+export async function identifyCluster(req: ClusterIdentifyRequest): Promise<ClusterIdentifyResponse> {
+    const r = await fetch(`${base()}/identify`, {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify(req),
+    });
+    return jsonOrThrow(r);
+}
+
+export type ClusterIdentifyCandidate = {
+    name: string;
+    embedding: number[];
+};
+
+export type ClusterIdentifyBatchRequest = {
+    candidates: ClusterIdentifyCandidate[];
+    threshold?: number;
+};
+
+export type ClusterIdentifyAssignment = {
+    clusterId: string;
+    bestName: string;
+    similarity: number;
+    existingLabel?: string | null;
+};
+
+export type UnmatchedClusterRow = {
+    clusterId: string;
+    label?: string | null;
+};
+
+export type ClusterIdentifyBatchResponse = {
+    totalClusters: number;
+    assignments: ClusterIdentifyAssignment[];
+    unmatched: UnmatchedClusterRow[];
+};
+
+/** Batch counterpart of [identifyCluster]: assigns each cluster to its best-matching candidate. */
+export async function identifyClusterBatch(req: ClusterIdentifyBatchRequest): Promise<ClusterIdentifyBatchResponse> {
+    const r = await fetch(`${base()}/identify-batch`, {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify(req),
+    });
+    return jsonOrThrow(r);
+}
+
+/** Hard delete: detaches members/exemplars and drops the cluster retrievable. */
+export async function deleteCluster(clusterId: string): Promise<void> {
+    const r = await fetch(`${base()}/${encodeURIComponent(clusterId)}`, {method: "DELETE"});
+    if (!r.ok) throw new Error(`HTTP ${r.status} ${r.statusText}`);
 }
 
 export async function getCoOccurrences(
