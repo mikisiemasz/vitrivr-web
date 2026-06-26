@@ -4,6 +4,7 @@ import {
     getCoOccurrences,
     listClusters,
     type ClusterGalleryItem,
+    type ClusteringTarget,
 } from "../../lib/clusters";
 
 type NodeDatum = {
@@ -25,13 +26,15 @@ type Props = {
     minMembers?: number;
     minShared?: number;
     height?: number;
+    /** Restrict the network to detection-clusters or track-clusters. */
+    target?: ClusteringTarget;
 };
 
 function nameOf(c: ClusterGalleryItem): string {
     return c.label?.trim() || `Cluster ${c.clusterId.slice(0, 6)}`;
 }
 
-export function CoOccurrenceNetwork({minMembers = 5, minShared = 2, height = 520}: Props) {
+export function CoOccurrenceNetwork({minMembers = 5, minShared = 2, height = 520, target}: Props) {
     const fgRef = useRef<ForceGraphMethods | undefined>(undefined);
 
     const [data, setData] = useState<GraphData>({nodes: [], links: []});
@@ -45,7 +48,7 @@ export function CoOccurrenceNetwork({minMembers = 5, minShared = 2, height = 520
         setError(null);
         setProgress({done: 0, total: 0});
         try {
-            const list = await listClusters({minMembers, limit: 500});
+            const list = await listClusters({minMembers, limit: 500, target});
             const clusters = list.clusters;
             setProgress({done: 0, total: clusters.length});
 
@@ -60,7 +63,7 @@ export function CoOccurrenceNetwork({minMembers = 5, minShared = 2, height = 520
             const linkMap = new Map<string, LinkDatum>();
             await Promise.all(clusters.map(async c => {
                 try {
-                    const r = await getCoOccurrences(c.clusterId, {limit: 200, minShared});
+                    const r = await getCoOccurrences(c.clusterId, {limit: 200, minShared, target});
                     for (const partner of r.partners) {
                         if (partner.sharedSegments < minShared) continue;
                         if (partner.clusterId === c.clusterId) continue;
@@ -83,7 +86,7 @@ export function CoOccurrenceNetwork({minMembers = 5, minShared = 2, height = 520
         } finally {
             setLoading(false);
         }
-    }, [minMembers, minShared]);
+    }, [minMembers, minShared, target]);
 
     useEffect(() => { void load(); }, [load]);
 

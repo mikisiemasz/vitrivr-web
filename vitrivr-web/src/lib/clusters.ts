@@ -13,9 +13,16 @@ const schema = () => {
 };
 const base = () => `${API_BASE}/api/${schema()}/clusters`;
 
+/**
+ * `target` distinguishes per-frame ("detections") from per-shot identity ("tracks") clustering runs.
+ * `memberType` on the resulting clusters mirrors this choice: FACE_DETECTION vs FACE_TRACK.
+ */
+export type ClusteringTarget = "detections" | "tracks";
+
 export type ClusterRunSummary = {
     runId: string;
     algorithm: string;
+    target: ClusteringTarget;
     embeddingField: string;
     minClusterSize: number;
     minSamples: number;
@@ -30,14 +37,23 @@ export type ClusterRunSummary = {
 };
 
 export type ClusterExemplar = {
+    /** For track-cluster exemplars this is the *representative* face id (renderable). For detection
+     *  clusters this is the exemplar face id directly. */
     faceId: string;
     parentId?: string | null;
     bbox?: number[] | null;
+    /** Originating FACE_TRACK id if the cluster's members are tracks; null for detection clusters. */
+    trackId?: string | null;
 };
+
+/** Track-clustered runs produce members of type FACE_TRACK; classic detection runs produce FACE_DETECTION. */
+export type ClusterMemberType = "FACE_DETECTION" | "FACE_TRACK";
 
 export type ClusterGalleryItem = {
     clusterId: string;
     memberCount: number;
+    /** Defaults to FACE_DETECTION when the server omits the field (older runs). */
+    memberType?: ClusterMemberType;
     exemplars: ClusterExemplar[];
     label?: string | null;
     segmentCount: number;
@@ -95,6 +111,8 @@ export type ClusterMutationResult = {
 
 export type ListClustersParams = {
     runId?: string;
+    /** Limit the gallery to detection-clusters, track-clusters, or "all" (server default). */
+    target?: ClusteringTarget | "all";
     limit?: number;
     offset?: number;
     minMembers?: number;
@@ -122,7 +140,40 @@ export async function listClusterRuns(): Promise<ClusterRunSummary[]> {
     return jsonOrThrow(await fetch(`${base()}/runs`));
 }
 
+/** Drops a FACE_CLUSTER_RUN and all FACE_CLUSTERs it produced. Members (detections/tracks) are preserved. */
+export async function deleteClusterRun(runId: string): Promise<void> {
+    const r = await fetch(`${base()}/runs/${encodeURIComponent(runId)}`, {method: "DELETE"});
+    if (!r.ok) throw new Error(`HTTP ${r.status} ${r.statusText}`);
+}
+
+/* ── Tracking runs ─────────────────────────────────────────────────────────────────────────── */
+
+const tracksBase = () => `${API_BASE}/api/${schema()}/tracks`;
+
+export type TrackRunListItem = {
+    runId: string;
+    numTracks: number;
+};
+
+/** Returns track runs in insertion order — last item is the most recent. */
+export async function listTrackRuns(): Promise<TrackRunListItem[]> {
+    return jsonOrThrow(await fetch(`${tracksBase()}/runs`));
+}
+
+/**
+ * Drops a FACE_TRACK_RUN, every FACE_TRACK it produced, and the partOfTrack edges that linked face detections
+ * to those tracks. FACE_DETECTIONs themselves are preserved. Use this before running fresh tracking to keep
+ * the input set clean (see also: re-running track clustering with stale tracks from prior runs produces noisy
+ * input).
+ */
+export async function deleteTrackRun(runId: string): Promise<void> {
+    const r = await fetch(`${tracksBase()}/runs/${encodeURIComponent(runId)}`, {method: "DELETE"});
+    if (!r.ok) throw new Error(`HTTP ${r.status} ${r.statusText}`);
+}
+
 export type TriggerClusteringParams = {
+    /** "detections" (default, classic per-frame clustering) or "tracks" (cluster on track centroids). */
+    target?: ClusteringTarget;
     minClusterSize?: number;
     minSamples?: number;
     exemplarCount?: number;
@@ -160,8 +211,9 @@ export type GroupSizeHistogramResponse = {
     bins: GroupSizeBin[];
 };
 
-export async function getGroupSizeHistogram(): Promise<GroupSizeHistogramResponse> {
-    return jsonOrThrow(await fetch(`${base()}/stats/group-sizes`));
+export async function getGroupSizeHistogram(target?: ClusteringTarget): Promise<GroupSizeHistogramResponse> {
+    const q = target ? `?target=${encodeURIComponent(target)}` : "";
+    return jsonOrThrow(await fetch(`${base()}/stats/group-sizes${q}`));
 }
 
 /**
@@ -229,8 +281,12 @@ export type ClusterIdentifyResponse = {
     matches: ClusterIdentifyMatch[];
 };
 
-export async function identifyCluster(req: ClusterIdentifyRequest): Promise<ClusterIdentifyResponse> {
-    const r = await fetch(`${base()}/identify`, {
+export async function identifyCluster(
+    req: ClusterIdentifyRequest,
+    target?: ClusteringTarget,
+): Promise<ClusterIdentifyResponse> {
+    const q = target ? `?target=${encodeURIComponent(target)}` : "";
+    const r = await fetch(`${base()}/identify${q}`, {
         method: "POST",
         headers: {"Content-Type": "application/json"},
         body: JSON.stringify(req),
@@ -267,8 +323,12 @@ export type ClusterIdentifyBatchResponse = {
 };
 
 /** Batch counterpart of [identifyCluster]: assigns each cluster to its best-matching candidate. */
-export async function identifyClusterBatch(req: ClusterIdentifyBatchRequest): Promise<ClusterIdentifyBatchResponse> {
-    const r = await fetch(`${base()}/identify-batch`, {
+export async function identifyClusterBatch(
+    req: ClusterIdentifyBatchRequest,
+    target?: ClusteringTarget,
+): Promise<ClusterIdentifyBatchResponse> {
+    const q = target ? `?target=${encodeURIComponent(target)}` : "";
+    const r = await fetch(`${base()}/identify-batch${q}`, {
         method: "POST",
         headers: {"Content-Type": "application/json"},
         body: JSON.stringify(req),
@@ -284,9 +344,33 @@ export async function deleteCluster(clusterId: string): Promise<void> {
 
 export async function getCoOccurrences(
     clusterId: string,
-    p: {limit?: number; minShared?: number} = {},
+    p: {limit?: number; minShared?: number; target?: ClusteringTarget} = {},
 ): Promise<CoOccurrenceResponse> {
     return jsonOrThrow(await fetch(`${base()}/${encodeURIComponent(clusterId)}/co-occurrences${qs(p)}`));
+}
+
+export type ClusterTimelineSegment = {
+    segmentId: string;
+    startNs: number;
+    endNs: number;
+    detectionCount: number;
+};
+
+export type ClusterTimelineVideo = {
+    sourceId: string;
+    filePath?: string | null;
+    /** Max endNs across this video's segments; used as the lane's right-edge scale. TODO: change to video end time instead */
+    lastAppearanceNs: number;
+    segments: ClusterTimelineSegment[];
+};
+
+export type ClusterTimelineResponse = {
+    clusterId: string;
+    videos: ClusterTimelineVideo[];
+};
+
+export async function getClusterTimeline(clusterId: string): Promise<ClusterTimelineResponse> {
+    return jsonOrThrow(await fetch(`${base()}/${encodeURIComponent(clusterId)}/timeline`));
 }
 
 export async function setClusterLabel(clusterId: string, label: string | null): Promise<void> {

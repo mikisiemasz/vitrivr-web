@@ -14,6 +14,7 @@ import {
     getCoOccurrences,
     listClusters,
     type ClusterGalleryItem,
+    type ClusteringTarget,
 } from "../../lib/clusters";
 
 type PairItem = {
@@ -31,6 +32,9 @@ type Props = {
     minMembers?: number;
     /** Drop pairs with fewer than this many shared segments. */
     minShared?: number;
+    /** Restrict the pairs analysis to one kind of cluster ("detections" or "tracks"). When undefined the
+     *  server defaults apply (same-as-queried-cluster for co-occurrences). */
+    target?: ClusteringTarget;
 };
 
 function nameOf(c: ClusterGalleryItem): string {
@@ -57,7 +61,7 @@ function PairTooltip({active, payload}: TooltipContentProps<number, string>) {
     );
 }
 
-export function CoOccurrencePairsChart({topN = 20, minMembers = 5, minShared = 2}: Props) {
+export function CoOccurrencePairsChart({topN = 20, minMembers = 5, minShared = 2, target}: Props) {
     const [loaded, setLoaded] = useState(false);
     const [pairs, setPairs] = useState<PairItem[]>([]);
     const [loading, setLoading] = useState(false);
@@ -69,7 +73,7 @@ export function CoOccurrencePairsChart({topN = 20, minMembers = 5, minShared = 2
         setError(null);
         setProgress({done: 0, total: 0});
         try {
-            const list = await listClusters({minMembers, limit: 500});
+            const list = await listClusters({minMembers, limit: 500, target});
             const clusters = list.clusters;
             setProgress({done: 0, total: clusters.length});
 
@@ -78,7 +82,7 @@ export function CoOccurrencePairsChart({topN = 20, minMembers = 5, minShared = 2
 
             await Promise.all(clusters.map(async c => {
                 try {
-                    const r = await getCoOccurrences(c.clusterId, {limit: 200, minShared});
+                    const r = await getCoOccurrences(c.clusterId, {limit: 200, minShared, target});
                     for (const partner of r.partners) {
                         if (partner.sharedSegments < minShared) continue;
                         if (partner.clusterId === c.clusterId) continue;
@@ -113,7 +117,7 @@ export function CoOccurrencePairsChart({topN = 20, minMembers = 5, minShared = 2
         } finally {
             setLoading(false);
         }
-    }, [minMembers, minShared]);
+    }, [minMembers, minShared, target]);
 
     /* Initial fetch when mounted. */
     useEffect(() => { void load(); }, [load]);

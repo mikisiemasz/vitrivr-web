@@ -1,12 +1,19 @@
 import {useCallback, useEffect, useMemo, useState} from "react";
 import {
     listClusters,
+    listClusterRuns,
+    deleteClusterRun,
+    listTrackRuns,
+    deleteTrackRun,
     triggerClustering,
     setClusterLabel,
     mergeClusters,
     getClusterCentroid,
     type ClusterGalleryItem,
+    type ClusterRunSummary,
+    type ClusteringTarget,
     type ListClustersParams,
+    type TrackRunListItem,
     type TriggerClusteringParams,
 } from "../../lib/clusters";
 import {thumbnailUrl} from "../../lib/vitrivr";
@@ -33,6 +40,10 @@ export function PeopleTab() {
     const [minMembers, setMinMembers] = useState(5);
     const [sort, setSort] = useState<SortOpt>("members");
     const [labelFilter, setLabelFilter] = useState<"all" | "labelled" | "unlabelled">("all");
+    /* View filter — pick which kind of clustering output to show. "all" keeps the previous behaviour
+       (mixed gallery) for backward compatibility; defaults to detections so the gallery isn't a mess
+       when both detection-runs and track-runs coexist in the same schema. */
+    const [viewTarget, setViewTarget] = useState<ClusteringTarget | "all">("detections");
     const [search, setSearch] = useState("");
 
     const [openCluster, setOpenCluster] = useState<ClusterGalleryItem | null>(null);
@@ -42,7 +53,12 @@ export function PeopleTab() {
     const [showControls, setShowControls] = useState(false);
     const [showRelationships, setShowRelationships] = useState(false);
     const [showIdentify, setShowIdentify] = useState(false);
+    const [showRuns, setShowRuns] = useState(false);
+    const [clusterRuns, setClusterRuns] = useState<ClusterRunSummary[]>([]);
+    const [trackRuns, setTrackRuns] = useState<TrackRunListItem[]>([]);
+    const [runsLoading, setRunsLoading] = useState(false);
     const [relationshipView, setRelationshipView] = useState<RelationshipView>("pairs");
+    const [target, setTarget] = useState<ClusteringTarget>("detections");
     const [minClusterSize, setMinClusterSize] = useState(5);
     const [minSamples, setMinSamples] = useState(3);
     const [exemplarCount, setExemplarCount] = useState(5);
@@ -58,6 +74,7 @@ export function PeopleTab() {
                 minMembers,
                 sort,
                 limit: 200,
+                target: viewTarget,
                 onlyLabelled: labelFilter === "labelled" || undefined,
                 onlyUnlabelled: labelFilter === "unlabelled" || undefined,
             });
@@ -68,7 +85,7 @@ export function PeopleTab() {
         } finally {
             setLoading(false);
         }
-    }, [minMembers, sort, labelFilter]);
+    }, [minMembers, sort, labelFilter, viewTarget]);
 
     useEffect(() => { void reload(); }, [reload]);
 
@@ -122,17 +139,59 @@ export function PeopleTab() {
         }
     }
 
+    /* Reload both run lists. Used after delete and when the user opens the Runs panel. */
+    const reloadRuns = useCallback(async () => {
+        setRunsLoading(true);
+        try {
+            const [cr, tr] = await Promise.all([listClusterRuns(), listTrackRuns()]);
+            setClusterRuns(cr);
+            setTrackRuns(tr);
+        } catch (e) {
+            console.warn("Failed to load runs", e);
+        } finally {
+            setRunsLoading(false);
+        }
+    }, []);
+
+    useEffect(() => {
+        if (showRuns) void reloadRuns();
+    }, [showRuns, reloadRuns]);
+
+    async function onDeleteClusterRun(runId: string) {
+        if (!confirm(`Delete cluster run ${runId.slice(0, 8)}? Member detections/tracks are preserved.`)) return;
+        try {
+            await deleteClusterRun(runId);
+            await Promise.all([reloadRuns(), reload()]);
+        } catch (e) {
+            alert(`Delete failed: ${e instanceof Error ? e.message : String(e)}`);
+        }
+    }
+
+    async function onDeleteTrackRun(runId: string) {
+        if (!confirm(
+            `Delete track run ${runId.slice(0, 8)}? All ${trackRuns.find(t => t.runId === runId)?.numTracks ?? "?"} tracks ` +
+            `it produced will be removed (face detections preserved).`
+        )) return;
+        try {
+            await deleteTrackRun(runId);
+            await Promise.all([reloadRuns(), reload()]);
+        } catch (e) {
+            alert(`Delete failed: ${e instanceof Error ? e.message : String(e)}`);
+        }
+    }
+
     async function onRunClustering() {
         setRunning(true);
         setRunMessage(null);
         try {
             const params: TriggerClusteringParams = {
-                minClusterSize, minSamples, exemplarCount, labelCarryThreshold,
+                target, minClusterSize, minSamples, exemplarCount, labelCarryThreshold,
             };
             const r = await triggerClustering(params);
+            const inputNoun = r.target === "tracks" ? "tracks" : "faces";
             setRunMessage(
-                `Run ${r.runId.slice(0, 8)}: ${r.numClusters} clusters, ` +
-                `${r.numAssignedFaces}/${r.numInputFaces} assigned, ${r.numLabelsCarried} labels carried.`
+                `Run ${r.runId.slice(0, 8)} [${r.target}]: ${r.numClusters} clusters, ` +
+                `${r.numAssignedFaces}/${r.numInputFaces} ${inputNoun} assigned, ${r.numLabelsCarried} labels carried.`
             );
             await reload();
         } catch (e) {
@@ -156,6 +215,18 @@ export function PeopleTab() {
 
             <section className="pt-controls">
                 <div className="pt-row">
+                    <label className="pt-label" title="Show clusters built from frame-level detections, from track-level identities, or both">
+                        View
+                        <select
+                            value={viewTarget}
+                            onChange={e => setViewTarget(e.target.value as ClusteringTarget | "all")}
+                        >
+                            <option value="detections">detections</option>
+                            <option value="tracks">tracks</option>
+                            <option value="all">all (mixed)</option>
+                        </select>
+                    </label>
+
                     <label className="pt-label">
                         Sort
                         <select value={sort} onChange={e => setSort(e.target.value as SortOpt)}>
@@ -201,11 +272,88 @@ export function PeopleTab() {
                     <button className="btn" onClick={() => setShowControls(s => !s)}>
                         {showControls ? "Hide" : "Re-cluster…"}
                     </button>
+                    <button className="btn" onClick={() => setShowRuns(s => !s)}>
+                        {showRuns ? "Hide runs" : "Manage runs"}
+                    </button>
                 </div>
+
+                {showRuns && (
+                    <div className="pt-cluster-controls">
+                        <div className="pt-row" style={{flexDirection: "column", alignItems: "stretch", gap: 16}}>
+                            <div>
+                                <div style={{fontWeight: 600, marginBottom: 4}}>
+                                    Cluster runs {runsLoading ? "(loading…)" : `(${clusterRuns.length})`}
+                                </div>
+                                {clusterRuns.length === 0 && !runsLoading && (
+                                    <div style={{color: "#888", fontSize: 12}}>No cluster runs yet.</div>
+                                )}
+                                {clusterRuns.map((r, i) => {
+                                    const isLatest = i === clusterRuns.length - 1;
+                                    return (
+                                        <div key={r.runId} style={{display: "flex", gap: 8, alignItems: "center", padding: "4px 0", fontSize: 13}}>
+                                            <code style={{fontFamily: "monospace"}}>{r.runId.slice(0, 8)}</code>
+                                            <span style={{color: "#666"}}>· {r.target ?? "detections"}</span>
+                                            <span style={{color: "#666"}}>· {r.embeddingField}</span>
+                                            {isLatest && (
+                                                <span style={{
+                                                    background: "#dcfce7", color: "#166534", borderRadius: 3,
+                                                    padding: "1px 6px", fontSize: 11, fontWeight: 600,
+                                                }}>latest</span>
+                                            )}
+                                            <button className="btn" style={{marginLeft: "auto"}}
+                                                    onClick={() => void onDeleteClusterRun(r.runId)}>
+                                                Delete
+                                            </button>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                            <div>
+                                <div style={{fontWeight: 600, marginBottom: 4}}>
+                                    Track runs {runsLoading ? "(loading…)" : `(${trackRuns.length})`}
+                                </div>
+                                {trackRuns.length === 0 && !runsLoading && (
+                                    <div style={{color: "#888", fontSize: 12}}>No track runs yet.</div>
+                                )}
+                                {trackRuns.map((r, i) => {
+                                    const isLatest = i === trackRuns.length - 1;
+                                    return (
+                                        <div key={r.runId} style={{display: "flex", gap: 8, alignItems: "center", padding: "4px 0", fontSize: 13}}>
+                                            <code style={{fontFamily: "monospace"}}>{r.runId.slice(0, 8)}</code>
+                                            <span style={{color: "#666"}}>· {r.numTracks} tracks</span>
+                                            {isLatest && (
+                                                <span style={{
+                                                    background: "#dcfce7", color: "#166534", borderRadius: 3,
+                                                    padding: "1px 6px", fontSize: 11, fontWeight: 600,
+                                                }}>latest</span>
+                                            )}
+                                            <button className="btn" style={{marginLeft: "auto"}}
+                                                    onClick={() => void onDeleteTrackRun(r.runId)}>
+                                                Delete
+                                            </button>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                            <div style={{color: "#888", fontSize: 11, fontStyle: "italic"}}>
+                                Runs are listed in DB insertion order — last item is the most recent.
+                                Deleting a cluster run drops its FACE_CLUSTERs but keeps the underlying detections/tracks.
+                                Deleting a track run drops its FACE_TRACKs and their descriptors; FACE_DETECTIONs are preserved.
+                            </div>
+                        </div>
+                    </div>
+                )}
 
                 {showControls && (
                     <div className="pt-cluster-controls">
                         <div className="pt-row">
+                            <label className="pt-label" title="Cluster per-frame detections or per-shot tracks">
+                                target
+                                <select value={target} onChange={e => setTarget(e.target.value as ClusteringTarget)}>
+                                    <option value="detections">detections (faces)</option>
+                                    <option value="tracks">tracks (identities)</option>
+                                </select>
+                            </label>
                             <label className="pt-label">
                                 min_cluster_size
                                 <input
@@ -258,7 +406,7 @@ export function PeopleTab() {
             </section>
 
             {showIdentify && (
-                <ClusterIdentifyPanel/>
+                <ClusterIdentifyPanel target={viewTarget === "all" ? undefined : viewTarget}/>
             )}
 
             {showRelationships && (
@@ -277,14 +425,27 @@ export function PeopleTab() {
                             onClick={() => setRelationshipView("histogram")}
                         >Group sizes</button>
                     </div>
+                    {/* Forward the view filter so the relationship/histogram analyses are scoped to one cluster kind
+                        rather than mixing detection- and track-clusters. When viewTarget is "all" we leave target
+                        undefined so the server-side default applies (detections for the histogram; same-as-queried
+                        for co-occurrences). */}
                     {relationshipView === "pairs" && (
-                        <CoOccurrencePairsChart topN={20} minMembers={minMembers} minShared={2}/>
+                        <CoOccurrencePairsChart
+                            topN={20}
+                            minMembers={minMembers}
+                            minShared={2}
+                            target={viewTarget === "all" ? undefined : viewTarget}
+                        />
                     )}
                     {relationshipView === "network" && (
-                        <CoOccurrenceNetwork minMembers={minMembers} minShared={2}/>
+                        <CoOccurrenceNetwork
+                            minMembers={minMembers}
+                            minShared={2}
+                            target={viewTarget === "all" ? undefined : viewTarget}
+                        />
                     )}
                     {relationshipView === "histogram" && (
-                        <GroupSizeHistogram/>
+                        <GroupSizeHistogram target={viewTarget === "all" ? undefined : viewTarget}/>
                     )}
                 </section>
             )}
@@ -319,9 +480,14 @@ export function PeopleTab() {
                             <div className="pt-card__body">
                                 <div className="pt-card__name" title={c.clusterId}>
                                     {c.label ?? <span className="pt-card__unknown">Unknown #{c.clusterId.slice(0, 6)}</span>}
+                                    {c.memberType === "FACE_TRACK" && (
+                                        <span className="pt-card__badge" title="Cluster of tracks (identity-level)"> · tracks</span>
+                                    )}
                                 </div>
                                 <div className="pt-card__stats">
-                                    {c.memberCount} faces · {c.segmentCount} segments
+                                    {c.memberType === "FACE_TRACK"
+                                        ? `${c.memberCount} tracks`
+                                        : `${c.memberCount} faces · ${c.segmentCount} segments`}
                                 </div>
                                 <div style={{display: "flex", gap: 4, flexWrap: "wrap"}}>
                                     <button

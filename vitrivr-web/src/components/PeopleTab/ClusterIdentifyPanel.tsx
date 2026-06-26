@@ -12,6 +12,7 @@ import {
     type ClusterIdentifyAssignment,
     type UnmatchedClusterRow,
     type ClusterGalleryItem,
+    type ClusteringTarget,
 } from "../../lib/clusters";
 import {thumbnailUrl} from "../../lib/vitrivr";
 import {useSearch} from "../../state/SearchContext.tsx";
@@ -126,7 +127,12 @@ function ClusterThumb({schema, item}: {schema: string; item?: ClusterGalleryItem
 
 /* panel */
 
-export function ClusterIdentifyPanel() {
+type ClusterIdentifyPanelProps = {
+    /** Restrict identify scoring + catalog to one cluster kind. Undefined = all kinds (server default). */
+    target?: ClusteringTarget;
+};
+
+export function ClusterIdentifyPanel({target}: ClusterIdentifyPanelProps = {}) {
     const {schema, setFaceGallery} = useSearch();
     const [mode, setMode] = useState<Mode>("single");
 
@@ -165,7 +171,7 @@ export function ClusterIdentifyPanel() {
         let cancelled = false;
         (async () => {
             try {
-                const r = await listClusters({limit: 5000, minMembers: 1});
+                const r = await listClusters({limit: 5000, minMembers: 1, target});
                 if (cancelled) return;
                 setCatalog(new Map(r.clusters.map(c => [c.clusterId, c])));
             } catch {
@@ -173,11 +179,11 @@ export function ClusterIdentifyPanel() {
             }
         })();
         return () => { cancelled = true; };
-    }, [schema]);
+    }, [schema, target]);
 
     async function refreshCatalog() {
         try {
-            const r = await listClusters({limit: 5000, minMembers: 1});
+            const r = await listClusters({limit: 5000, minMembers: 1, target});
             setCatalog(new Map(r.clusters.map(c => [c.clusterId, c])));
         } catch { /* ignore */ }
     }
@@ -192,7 +198,7 @@ export function ClusterIdentifyPanel() {
         setFlash({show: false, message: "", kind: "info"});
         try {
             const emb = await extractAveragedFaceEmbedding(files);
-            const r = await identifyCluster({embedding: emb, threshold: WEAK_THRESHOLD, topK: 5});
+            const r = await identifyCluster({embedding: emb, threshold: WEAK_THRESHOLD, topK: 5}, target);
             setSingleEmbedding(emb);
             setSingleMatches(r.matches);
             if (r.matches.length === 0) {
@@ -248,7 +254,7 @@ export function ClusterIdentifyPanel() {
                 embeddings.set(g.name, emb);
             }
             const candidates = Array.from(embeddings.entries()).map(([name, embedding]) => ({name, embedding}));
-            const r = await identifyClusterBatch({candidates, threshold: WEAK_THRESHOLD});
+            const r = await identifyClusterBatch({candidates, threshold: WEAK_THRESHOLD}, target);
 
             setBatchEmbeddings(embeddings);
             setBatchAssignments(r.assignments);

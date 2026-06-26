@@ -10,7 +10,7 @@ import {
     XAxis,
     YAxis,
 } from "recharts";
-import {getGroupSizeHistogram, type GroupSizeBin} from "../../lib/clusters";
+import {getGroupSizeHistogram, type ClusteringTarget, type GroupSizeBin} from "../../lib/clusters";
 
 function intensityColor(value: number, max: number): string {
     const t = max > 0 ? value / max : 0;
@@ -35,7 +35,12 @@ function HistTooltip({active, payload, total}: TooltipContentProps<number, strin
     );
 }
 
-export function GroupSizeHistogram() {
+type Props = {
+    /** Restrict the histogram to detection-clusters or track-clusters. Server defaults to "detections" when omitted. */
+    target?: ClusteringTarget;
+};
+
+export function GroupSizeHistogram({target}: Props = {}) {
     const [bins, setBins] = useState<GroupSizeBin[]>([]);
     const [total, setTotal] = useState(0);
     const [loading, setLoading] = useState(false);
@@ -45,7 +50,7 @@ export function GroupSizeHistogram() {
         setLoading(true);
         setError(null);
         try {
-            const r = await getGroupSizeHistogram();
+            const r = await getGroupSizeHistogram(target);
             setBins(r.bins);
             setTotal(r.totalSegments);
         } catch (e) {
@@ -53,7 +58,7 @@ export function GroupSizeHistogram() {
         } finally {
             setLoading(false);
         }
-    }, []);
+    }, [target]);
 
     useEffect(() => { void load(); }, [load]);
 
