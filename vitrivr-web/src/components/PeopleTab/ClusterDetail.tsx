@@ -4,12 +4,14 @@ import {
     getClusterSegments,
     getClusterMembers,
     getCoOccurrences,
+    getClusterTimeline,
     setClusterLabel,
     splitCluster,
     type ClusterGalleryItem,
     type ClusterSegmentItem,
     type ClusterMemberItem,
     type CoOccurrenceItem,
+    type ClusterTimelineVideo,
 } from "../../lib/clusters";
 import {thumbnailUrl} from "../../lib/vitrivr";
 import {useSearch} from "../../state/SearchContext";
@@ -20,7 +22,24 @@ type Props = {
     onChanged: () => void;
 };
 
-type Tab = "segments" | "members" | "co";
+type Tab = "segments" | "members" | "co" | "timeline";
+
+/** Format a nanosecond offset as M:SS or H:MM:SS for timeline axis labels and tooltips. */
+function fmtNs(ns: number): string {
+    const sec = Math.max(0, Math.round(ns / 1_000_000_000));
+    const h = Math.floor(sec / 3600);
+    const m = Math.floor((sec % 3600) / 60);
+    const s = sec % 60;
+    if (h > 0) return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+    return `${m}:${String(s).padStart(2, "0")}`;
+}
+
+/** Derive a display filename from a stored file.path */
+function basename(p?: string | null): string {
+    if (!p) return "";
+    const norm = p.replace(/\\/g, "/");
+    return norm.substring(norm.lastIndexOf("/") + 1);
+}
 
 export function ClusterDetail({cluster, onClose, onChanged}: Props) {
     const {schema: SCHEMA} = useSearch();
@@ -28,6 +47,7 @@ export function ClusterDetail({cluster, onClose, onChanged}: Props) {
     const [segments, setSegments] = useState<ClusterSegmentItem[]>([]);
     const [members, setMembers] = useState<ClusterMemberItem[]>([]);
     const [partners, setPartners] = useState<CoOccurrenceItem[]>([]);
+    const [timeline, setTimeline] = useState<ClusterTimelineVideo[]>([]);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [label, setLabelLocal] = useState(cluster.label ?? "");
@@ -44,9 +64,12 @@ export function ClusterDetail({cluster, onClose, onChanged}: Props) {
                 const r = await getClusterMembers(cluster.clusterId, {limit: 60});
                 setMembers(r.members);
                 setSelectedFaces(new Set());
-            } else {
+            } else if (tab === "co") {
                 const r = await getCoOccurrences(cluster.clusterId, {limit: 50, minShared: 1});
                 setPartners(r.partners);
+            } else {
+                const r = await getClusterTimeline(cluster.clusterId);
+                setTimeline(r.videos);
             }
         } catch (e) {
             setError(e instanceof Error ? e.message : String(e));
@@ -115,6 +138,7 @@ export function ClusterDetail({cluster, onClose, onChanged}: Props) {
                     <button className={tab === "segments" ? "pt-tab pt-tab--active" : "pt-tab"} onClick={() => setTab("segments")}>Segments</button>
                     <button className={tab === "members" ? "pt-tab pt-tab--active" : "pt-tab"} onClick={() => setTab("members")}>Faces</button>
                     <button className={tab === "co" ? "pt-tab pt-tab--active" : "pt-tab"} onClick={() => setTab("co")}>Co-occurrences</button>
+                    <button className={tab === "timeline" ? "pt-tab pt-tab--active" : "pt-tab"} onClick={() => setTab("timeline")}>Timeline</button>
                 </nav>
 
                 {error && <div className="pt-error">{error}</div>}
@@ -197,6 +221,70 @@ export function ClusterDetail({cluster, onClose, onChanged}: Props) {
                         ))}
                         {partners.length === 0 && <div className="pt-empty">No co-occurring clusters.</div>}
                     </ul>
+                )}
+
+                {tab === "timeline" && !loading && (
+                    <div style={{display: "flex", flexDirection: "column", gap: 14}}>
+                        {timeline.map(v => {
+                            /* Per-video scale: lane right edge = last appearance. Each appearance is
+                               an absolutely-positioned stripe at its [startNs, endNs] proportion of
+                               that scale. No source duration available */
+                            const scale = Math.max(1, v.lastAppearanceNs);
+                            const totalDetections = v.segments.reduce((a, s) => a + s.detectionCount, 0);
+                            return (
+                                <div key={v.sourceId} style={{display: "flex", flexDirection: "column", gap: 4}}>
+                                    <div style={{display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8}}>
+                                        <span style={{fontWeight: 500, fontSize: 13, wordBreak: "break-all"}}>
+                                            {basename(v.filePath) || v.sourceId.slice(0, 8) + "…"}
+                                        </span>
+                                        <span style={{fontSize: 11, color: "#6b7280", whiteSpace: "nowrap"}}>
+                                            {v.segments.length} segment{v.segments.length === 1 ? "" : "s"} ·{" "}
+                                            {totalDetections} detection{totalDetections === 1 ? "" : "s"}
+                                        </span>
+                                    </div>
+                                    <div style={{
+                                        position: "relative",
+                                        height: 22,
+                                        background: "#f1f5f9",
+                                        borderRadius: 4,
+                                        overflow: "hidden",
+                                    }}>
+                                        {v.segments.map(s => {
+                                            const leftPct = (s.startNs / scale) * 100;
+                                            /* Floor a minimum visible width so single-frame appearances
+                                               don't collapse to a 0px stripe at large scales. */
+                                            const widthPct = Math.max(0.4, ((s.endNs - s.startNs) / scale) * 100);
+                                            return (
+                                                <Link
+                                                    key={s.segmentId}
+                                                    to={`/video/${encodeURIComponent(s.segmentId)}`}
+                                                    title={`${fmtNs(s.startNs)} – ${fmtNs(s.endNs)} · ${s.detectionCount} detection${s.detectionCount === 1 ? "" : "s"}`}
+                                                    style={{
+                                                        position: "absolute",
+                                                        left: `${leftPct}%`,
+                                                        width: `${widthPct}%`,
+                                                        top: 0, bottom: 0,
+                                                        background: "rgba(34, 197, 94, 0.85)",
+                                                        borderRadius: 2,
+                                                        display: "block",
+                                                    }}
+                                                />
+                                            );
+                                        })}
+                                    </div>
+                                    <div style={{display: "flex", justifyContent: "space-between", fontSize: 10, color: "#6b7280"}}>
+                                        <span>0:00</span>
+                                        <span>last appearance {fmtNs(v.lastAppearanceNs)}</span>
+                                    </div>
+                                </div>
+                            );
+                        })}
+                        {timeline.length === 0 && (
+                            <div className="pt-empty">
+                                No timed segments — this cluster's detections have no resolvable source + time descriptors.
+                            </div>
+                        )}
+                    </div>
                 )}
             </div>
         </div>

@@ -122,6 +122,12 @@ export async function listClusterRuns(): Promise<ClusterRunSummary[]> {
     return jsonOrThrow(await fetch(`${base()}/runs`));
 }
 
+/** Drops a FACE_CLUSTER_RUN and all FACE_CLUSTERs it produced. Member detections are preserved. */
+export async function deleteClusterRun(runId: string): Promise<void> {
+    const r = await fetch(`${base()}/runs/${encodeURIComponent(runId)}`, {method: "DELETE"});
+    if (!r.ok) throw new Error(`HTTP ${r.status} ${r.statusText}`);
+}
+
 export type TriggerClusteringParams = {
     minClusterSize?: number;
     minSamples?: number;
@@ -287,6 +293,30 @@ export async function getCoOccurrences(
     p: {limit?: number; minShared?: number} = {},
 ): Promise<CoOccurrenceResponse> {
     return jsonOrThrow(await fetch(`${base()}/${encodeURIComponent(clusterId)}/co-occurrences${qs(p)}`));
+}
+
+export type ClusterTimelineSegment = {
+    segmentId: string;
+    startNs: number;
+    endNs: number;
+    detectionCount: number;
+};
+
+export type ClusterTimelineVideo = {
+    sourceId: string;
+    filePath?: string | null;
+    /** Max endNs across this video's segments; used as the lane's right-edge scale. TODO: change to actual video duration */
+    lastAppearanceNs: number;
+    segments: ClusterTimelineSegment[];
+};
+
+export type ClusterTimelineResponse = {
+    clusterId: string;
+    videos: ClusterTimelineVideo[];
+};
+
+export async function getClusterTimeline(clusterId: string): Promise<ClusterTimelineResponse> {
+    return jsonOrThrow(await fetch(`${base()}/${encodeURIComponent(clusterId)}/timeline`));
 }
 
 export async function setClusterLabel(clusterId: string, label: string | null): Promise<void> {

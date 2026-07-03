@@ -12,6 +12,30 @@ export const FACE_SERVER_URL =
 export const FACE_SCORE_THRESHOLD =
     parseFloat((import.meta.env.VITE_FACE_SCORE_THRESHOLD as string | undefined) ?? "0") || 0;
 
+/* Active schema, read from the same localStorage key SchemaSelector writes to
+   (mirrors lib/clusters.ts), so the face endpoint follows the selected schema. */
+function activeSchema(): string {
+    try {
+        const s = (window.localStorage.getItem("vitrivr_schema") ?? "").trim();
+        if (s) return s;
+    } catch {
+        // localStorage may be unavailable; fall through.
+    }
+    return "";
+}
+
+/* Pick the descriptor-server endpoint matching the active schema's face model.
+   The query embedding MUST come from the same model that produced the stored
+   `face` descriptors — ArcFace and FaceNet are both 512-d but live in different
+   vector spaces, so a mismatch yields meaningless cosine distances (no error).
+   Pragmatic heuristic on the schema name; the robust version would introspect the
+   schema's face-field analyser via the engine. */
+function faceEmbeddingEndpoint(): string {
+    return activeSchema().toLowerCase().includes("facenet")
+        ? "/extract/face_embedding_facenet"
+        : "/extract/face_embedding";
+}
+
 async function fileToBase64DataUrl(file: File): Promise<string> {
     return new Promise((resolve, reject) => {
         const reader = new FileReader();
@@ -58,7 +82,7 @@ export async function extractFaceEmbedding(file: File): Promise<number[]> {
     form.append("data", dataUrl);
 
     // Proxy via Vite dev proxy to avoid CORS during development; see vite.config.ts
-    const resp = await fetch(`/face-api/extract/face_embedding`, {
+    const resp = await fetch(`/face-api${faceEmbeddingEndpoint()}`, {
         method: "POST",
         body: form,
     });

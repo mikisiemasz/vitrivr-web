@@ -1,11 +1,14 @@
 import {useCallback, useEffect, useMemo, useState} from "react";
 import {
     listClusters,
+    listClusterRuns,
+    deleteClusterRun,
     triggerClustering,
     setClusterLabel,
     mergeClusters,
     getClusterCentroid,
     type ClusterGalleryItem,
+    type ClusterRunSummary,
     type ListClustersParams,
     type TriggerClusteringParams,
 } from "../../lib/clusters";
@@ -42,6 +45,9 @@ export function PeopleTab() {
     const [showControls, setShowControls] = useState(false);
     const [showRelationships, setShowRelationships] = useState(false);
     const [showIdentify, setShowIdentify] = useState(false);
+    const [showRuns, setShowRuns] = useState(false);
+    const [clusterRuns, setClusterRuns] = useState<ClusterRunSummary[]>([]);
+    const [runsLoading, setRunsLoading] = useState(false);
     const [relationshipView, setRelationshipView] = useState<RelationshipView>("pairs");
     const [minClusterSize, setMinClusterSize] = useState(5);
     const [minSamples, setMinSamples] = useState(3);
@@ -122,6 +128,35 @@ export function PeopleTab() {
         }
     }
 
+    /* Reload the cluster-run list. Used after delete and when the user opens the Runs panel. */
+    const [runsError, setRunsError] = useState<string | null>(null);
+    const reloadRuns = useCallback(async () => {
+        setRunsLoading(true);
+        setRunsError(null);
+        try {
+            setClusterRuns(await listClusterRuns());
+        } catch (e) {
+            setClusterRuns([]);
+            setRunsError(`Failed to load cluster runs: ${e instanceof Error ? e.message : String(e)}`);
+        } finally {
+            setRunsLoading(false);
+        }
+    }, []);
+
+    useEffect(() => {
+        if (showRuns) void reloadRuns();
+    }, [showRuns, reloadRuns]);
+
+    async function onDeleteClusterRun(runId: string) {
+        if (!confirm(`Delete cluster run ${runId.slice(0, 8)}? Member detections are preserved.`)) return;
+        try {
+            await deleteClusterRun(runId);
+            await Promise.all([reloadRuns(), reload()]);
+        } catch (e) {
+            alert(`Delete failed: ${e instanceof Error ? e.message : String(e)}`);
+        }
+    }
+
     async function onRunClustering() {
         setRunning(true);
         setRunMessage(null);
@@ -132,7 +167,7 @@ export function PeopleTab() {
             const r = await triggerClustering(params);
             setRunMessage(
                 `Run ${r.runId.slice(0, 8)}: ${r.numClusters} clusters, ` +
-                `${r.numAssignedFaces}/${r.numInputFaces} assigned, ${r.numLabelsCarried} labels carried.`
+                `${r.numAssignedFaces}/${r.numInputFaces} faces assigned, ${r.numLabelsCarried} labels carried.`
             );
             await reload();
         } catch (e) {
@@ -201,7 +236,49 @@ export function PeopleTab() {
                     <button className="btn" onClick={() => setShowControls(s => !s)}>
                         {showControls ? "Hide" : "Re-cluster…"}
                     </button>
+                    <button className="btn" onClick={() => setShowRuns(s => !s)}>
+                        {showRuns ? "Hide runs" : "Manage runs"}
+                    </button>
                 </div>
+
+                {showRuns && (
+                    <div className="pt-cluster-controls">
+                        <div className="pt-row" style={{flexDirection: "column", alignItems: "stretch", gap: 16}}>
+                            {runsError && <div className="pt-error">{runsError}</div>}
+                            <div>
+                                <div style={{fontWeight: 600, marginBottom: 4}}>
+                                    Cluster runs {runsLoading ? "(loading…)" : `(${clusterRuns.length})`}
+                                </div>
+                                {clusterRuns.length === 0 && !runsLoading && (
+                                    <div style={{color: "#888", fontSize: 12}}>No cluster runs yet.</div>
+                                )}
+                                {clusterRuns.map((r, i) => {
+                                    const isLatest = i === clusterRuns.length - 1;
+                                    return (
+                                        <div key={r.runId} style={{display: "flex", gap: 8, alignItems: "center", padding: "4px 0", fontSize: 13}}>
+                                            <code style={{fontFamily: "monospace"}}>{r.runId.slice(0, 8)}</code>
+                                            <span style={{color: "#666"}}>· {r.embeddingField}</span>
+                                            {isLatest && (
+                                                <span style={{
+                                                    background: "#dcfce7", color: "#166534", borderRadius: 3,
+                                                    padding: "1px 6px", fontSize: 11, fontWeight: 600,
+                                                }}>latest</span>
+                                            )}
+                                            <button className="btn" style={{marginLeft: "auto"}}
+                                                    onClick={() => void onDeleteClusterRun(r.runId)}>
+                                                Delete
+                                            </button>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                            <div style={{color: "#888", fontSize: 11, fontStyle: "italic"}}>
+                                Runs are listed in DB insertion order — last item is the most recent.
+                                Deleting a cluster run drops its FACE_CLUSTERs but keeps the underlying detections.
+                            </div>
+                        </div>
+                    </div>
+                )}
 
                 {showControls && (
                     <div className="pt-cluster-controls">
@@ -278,10 +355,17 @@ export function PeopleTab() {
                         >Group sizes</button>
                     </div>
                     {relationshipView === "pairs" && (
-                        <CoOccurrencePairsChart topN={20} minMembers={minMembers} minShared={2}/>
+                        <CoOccurrencePairsChart
+                            topN={20}
+                            minMembers={minMembers}
+                            minShared={2}
+                        />
                     )}
                     {relationshipView === "network" && (
-                        <CoOccurrenceNetwork minMembers={minMembers} minShared={2}/>
+                        <CoOccurrenceNetwork
+                            minMembers={minMembers}
+                            minShared={2}
+                        />
                     )}
                     {relationshipView === "histogram" && (
                         <GroupSizeHistogram/>
