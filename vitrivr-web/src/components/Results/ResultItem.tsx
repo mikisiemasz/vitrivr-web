@@ -198,6 +198,7 @@ export default function ResultItem(props: ResultItemProps) {
                 poster: thumbnailUrl(schema, id),
                 start: (props as any).start,
                 end: (props as any).end,
+                name: typeof caption === "string" ? caption : undefined,
             }
             : undefined;
 

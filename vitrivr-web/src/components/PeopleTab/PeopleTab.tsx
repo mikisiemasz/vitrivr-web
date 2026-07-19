@@ -17,6 +17,7 @@ import {useSearch} from "../../state/SearchContext";
 import SchemaSelector from "../SchemaSelector";
 import {ClusterDetail} from "./ClusterDetail";
 import {ClusterIdentifyPanel} from "./ClusterIdentifyPanel";
+import {TemporalSequenceSearch} from "./TemporalSequenceSearch";
 import {CoOccurrencePairsChart} from "./CoOccurrencePairsChart";
 import {CoOccurrenceNetwork} from "./CoOccurrenceNetwork";
 import {GroupSizeHistogram} from "./GroupSizeHistogram";
@@ -45,6 +46,7 @@ export function PeopleTab() {
     const [showControls, setShowControls] = useState(false);
     const [showRelationships, setShowRelationships] = useState(false);
     const [showIdentify, setShowIdentify] = useState(false);
+    const [showSequence, setShowSequence] = useState(false);
     const [showRuns, setShowRuns] = useState(false);
     const [clusterRuns, setClusterRuns] = useState<ClusterRunSummary[]>([]);
     const [runsLoading, setRunsLoading] = useState(false);
@@ -230,6 +232,9 @@ export function PeopleTab() {
                     <button className="btn" onClick={() => setShowIdentify(s => !s)}>
                         {showIdentify ? "Hide identify" : "Identify…"}
                     </button>
+                    <button className="btn" onClick={() => setShowSequence(s => !s)}>
+                        {showSequence ? "Hide sequence" : "Sequence…"}
+                    </button>
                     <button className="btn" onClick={() => setShowRelationships(s => !s)}>
                         {showRelationships ? "Hide relationships" : "Relationships"}
                     </button>
@@ -336,6 +341,10 @@ export function PeopleTab() {
 
             {showIdentify && (
                 <ClusterIdentifyPanel/>
+            )}
+
+            {showSequence && (
+                <TemporalSequenceSearch/>
             )}
 
             {showRelationships && (

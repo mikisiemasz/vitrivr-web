@@ -13,7 +13,7 @@ import {
     type CoOccurrenceItem,
     type ClusterTimelineVideo,
 } from "../../lib/clusters";
-import {thumbnailUrl} from "../../lib/vitrivr";
+import {thumbnailUrl, sourceLabel, servedVideoUrl} from "../../lib/vitrivr";
 import {useSearch} from "../../state/SearchContext";
 
 type Props = {
@@ -34,18 +34,16 @@ function fmtNs(ns: number): string {
     return `${m}:${String(s).padStart(2, "0")}`;
 }
 
-/** Derive a display filename from a stored file.path */
-function basename(p?: string | null): string {
-    if (!p) return "";
-    const norm = p.replace(/\\/g, "/");
-    return norm.substring(norm.lastIndexOf("/") + 1);
-}
-
 export function ClusterDetail({cluster, onClose, onChanged}: Props) {
     const {schema: SCHEMA} = useSearch();
     const [tab, setTab] = useState<Tab>("segments");
     const [segments, setSegments] = useState<ClusterSegmentItem[]>([]);
+    /* segmentId -> (video path, segment start): joined in from the timeline endpoint so
+       segment links can hand VideoPage a playable src + start offset via router state. */
+    const [segMeta, setSegMeta] = useState<Map<string, {filePath?: string | null; startNs: number}>>(new Map());
     const [members, setMembers] = useState<ClusterMemberItem[]>([]);
+    const [membersTotal, setMembersTotal] = useState(0);
+    const [membersLoadingMore, setMembersLoadingMore] = useState(false);
     const [partners, setPartners] = useState<CoOccurrenceItem[]>([]);
     const [timeline, setTimeline] = useState<ClusterTimelineVideo[]>([]);
     const [loading, setLoading] = useState(false);
@@ -58,11 +56,20 @@ export function ClusterDetail({cluster, onClose, onChanged}: Props) {
         setError(null);
         try {
             if (tab === "segments") {
-                const r = await getClusterSegments(cluster.clusterId, {limit: 60});
+                const [r, t] = await Promise.all([
+                    getClusterSegments(cluster.clusterId, {limit: 60}),
+                    getClusterTimeline(cluster.clusterId),
+                ]);
                 setSegments(r.segments);
+                const meta = new Map<string, {filePath?: string | null; startNs: number}>();
+                for (const v of t.videos) {
+                    for (const s of v.segments) meta.set(s.segmentId, {filePath: v.filePath, startNs: s.startNs});
+                }
+                setSegMeta(meta);
             } else if (tab === "members") {
                 const r = await getClusterMembers(cluster.clusterId, {limit: 60});
                 setMembers(r.members);
+                setMembersTotal(r.total);
                 setSelectedFaces(new Set());
             } else if (tab === "co") {
                 const r = await getCoOccurrences(cluster.clusterId, {limit: 50, minShared: 1});
@@ -96,6 +103,27 @@ export function ClusterDetail({cluster, onClose, onChanged}: Props) {
             else next.add(id);
             return next;
         });
+    }
+
+    /* Appends further member pages (the initial load shows 60). `all` keeps paging until every
+       member is in — needed to audit big clusters for stray wrong detections before labeling. */
+    async function loadMoreMembers(all: boolean) {
+        setMembersLoadingMore(true);
+        try {
+            let next = members;
+            let total = membersTotal;
+            do {
+                const r = await getClusterMembers(cluster.clusterId, {limit: all ? 1000 : 200, offset: next.length});
+                next = next.concat(r.members);
+                total = r.total;
+                setMembers(next);
+                setMembersTotal(total);
+            } while (all && next.length < total && next.length > 0);
+        } catch (e) {
+            alert(`Loading more faces failed: ${e instanceof Error ? e.message : String(e)}`);
+        } finally {
+            setMembersLoadingMore(false);
+        }
     }
 
     async function onSplit() {
@@ -146,22 +174,48 @@ export function ClusterDetail({cluster, onClose, onChanged}: Props) {
 
                 {tab === "segments" && !loading && (
                     <div className="pt-grid pt-grid--small">
-                        {segments.map(s => (
-                            <Link key={s.parentId}
-                                  className="pt-seg-card"
-                                  to={`/video/${encodeURIComponent(s.parentId)}`}
-                                  title={`${s.detectionCount} detections in this segment`}
-                            >
-                                <img src={thumbnailUrl(SCHEMA, s.parentId)} alt={s.parentId} loading="lazy"/>
-                                <span className="pt-seg-card__badge">{s.detectionCount}</span>
-                            </Link>
-                        ))}
+                        {segments.map(s => {
+                            const meta = segMeta.get(s.parentId);
+                            return (
+                                <Link key={s.parentId}
+                                      className="pt-seg-card"
+                                      to={`/video/${encodeURIComponent(s.parentId)}`}
+                                      state={meta ? {
+                                          src: meta.filePath ? servedVideoUrl(SCHEMA, meta.filePath) : undefined,
+                                          start: meta.startNs / 1e9,
+                                          name: meta.filePath ? sourceLabel(meta.filePath) : undefined,
+                                          poster: thumbnailUrl(SCHEMA, s.parentId),
+                                      } : undefined}
+                                      title={`${s.detectionCount} detections in this segment`}
+                                >
+                                    <img src={thumbnailUrl(SCHEMA, s.parentId)} alt={s.parentId} loading="lazy"/>
+                                    <span className="pt-seg-card__badge">{s.detectionCount}</span>
+                                </Link>
+                            );
+                        })}
                         {segments.length === 0 && <div className="pt-empty">No segments.</div>}
                     </div>
                 )}
 
                 {tab === "members" && !loading && (
                     <>
+                        <div className="pt-row" style={{justifyContent: "space-between", alignItems: "center"}}>
+                            <span style={{fontSize: 12, color: "#6b7280"}}>
+                                {members.length} of {membersTotal} faces
+                            </span>
+                            {members.length < membersTotal && (
+                                <span style={{display: "flex", gap: 6}}>
+                                    <button className="btn" disabled={membersLoadingMore}
+                                            onClick={() => void loadMoreMembers(false)}>
+                                        {membersLoadingMore ? "Loading…" : "Load 200 more"}
+                                    </button>
+                                    <button className="btn" disabled={membersLoadingMore}
+                                            onClick={() => void loadMoreMembers(true)}>
+                                        Load all
+                                    </button>
+                                </span>
+                            )}
+                        </div>
                         {selectedFaces.size > 0 && (
                             <div className="pt-row pt-selection-bar">
                                 <span>{selectedFaces.size} faces selected</span>
@@ -194,7 +248,6 @@ export function ClusterDetail({cluster, onClose, onChanged}: Props) {
                                                     width:  `${Math.max(0, bbox[2] - bbox[0]) * 100}%`,
                                                     height: `${Math.max(0, bbox[3] - bbox[1]) * 100}%`,
                                                     border: "1px solid rgba(225, 29, 72, 0.75)",
-                                                    boxShadow: "none",
                                                     pointerEvents: "none",
                                                     boxSizing: "border-box",
                                                 }}
@@ -235,7 +288,7 @@ export function ClusterDetail({cluster, onClose, onChanged}: Props) {
                                 <div key={v.sourceId} style={{display: "flex", flexDirection: "column", gap: 4}}>
                                     <div style={{display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8}}>
                                         <span style={{fontWeight: 500, fontSize: 13, wordBreak: "break-all"}}>
-                                            {basename(v.filePath) || v.sourceId.slice(0, 8) + "…"}
+                                            {sourceLabel(v.filePath) || v.sourceId.slice(0, 8) + "…"}
                                         </span>
                                         <span style={{fontSize: 11, color: "#6b7280", whiteSpace: "nowrap"}}>
                                             {v.segments.length} segment{v.segments.length === 1 ? "" : "s"} ·{" "}
@@ -258,6 +311,12 @@ export function ClusterDetail({cluster, onClose, onChanged}: Props) {
                                                 <Link
                                                     key={s.segmentId}
                                                     to={`/video/${encodeURIComponent(s.segmentId)}`}
+                                                    state={{
+                                                        src: v.filePath ? servedVideoUrl(SCHEMA, v.filePath) : undefined,
+                                                        start: s.startNs / 1e9,
+                                                        name: v.filePath ? sourceLabel(v.filePath) : undefined,
+                                                        poster: thumbnailUrl(SCHEMA, s.segmentId),
+                                                    }}
                                                     title={`${fmtNs(s.startNs)} – ${fmtNs(s.endNs)} · ${s.detectionCount} detection${s.detectionCount === 1 ? "" : "s"}`}
                                                     style={{
                                                         position: "absolute",

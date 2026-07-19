@@ -296,12 +296,15 @@ export default function QueryBlock({
  * Face-modality chip selector.
  *
  * - Always shows every gallery person as a clickable chip with +/- include/exclude buttons.
- * - When "ordered left→right" is on AND there are 2+ included chips:
+ * - Match modes: "same segment" (plain co-occurrence), "left → right" (spatial order) and
+ *   "sequence" (temporal order: each next person appears within N seconds of the previous).
+ * - When an ordering mode is on AND there are 2+ included chips:
  *     • Included chips appear in a separate horizontal sortable row above the gallery,
- *       reflecting the spatial order that will be sent to /clusters/match.
+ *       reflecting the order that will be sent to /clusters/match (spatialOrder or
+ *       temporalOrder respectively).
  *     • Dragging them rewrites `block.faceInclude` in the new order.
- * - The toggle is only enabled when every currently-included chip carries a clusterId
- *   (i.e. came from the People tab "+ Gallery" button). Otherwise it shows a hint.
+ * - Ordering modes are only enabled when every currently-included chip carries a clusterId
+ *   (i.e. came from the People tab "+ Gallery" button). Otherwise they show a hint.
  */
 function FaceBlockChips({block, onChange, faceGallery}: {
     block: BlockState;
@@ -316,8 +319,10 @@ function FaceBlockChips({block, onChange, faceGallery}: {
     const excludeSet = new Set(exclude);
 
     const allIncludesAreClusters = include.every(n => !!faceGallery[n]?.clusterId);
-    const canSpatial = allIncludesAreClusters && include.length >= 2;
-    const spatialActive = !!block.faceSpatial && canSpatial;
+    const canOrder = allIncludesAreClusters && include.length >= 2;
+    const spatialActive = !!block.faceSpatial && canOrder;
+    const temporalActive = !!block.faceTemporal && canOrder;
+    const orderActive = spatialActive || temporalActive;
 
     function setInclude(next: string[]) {
         onChange({faceInclude: next});
@@ -348,35 +353,70 @@ function FaceBlockChips({block, onChange, faceGallery}: {
 
     return (
         <div>
-            {/* Spatial-ordering toggle */}
-            <label
-                style={{display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "#666", marginBottom: 8}}
-                title={canSpatial
-                    ? "Match segments where the included people appear in this left→right order."
-                    : "Add ≥2 included chips that were added via the People tab \"+ Gallery\" button to enable."}
+            {/* Match-mode selector: plain co-occurrence, spatial left→right, or temporal sequence.
+                The ordering modes need every included chip to carry a clusterId (People tab
+                "+ Gallery"), same gating for both. */}
+            <div
+                style={{display: "flex", alignItems: "center", gap: 12, fontSize: 12, color: "#666", marginBottom: 8, flexWrap: "wrap"}}
+                title={canOrder
+                    ? "Same segment: all included people co-occur. Left→right: they appear in this spatial order. " +
+                      "Sequence: each next person appears within the window after the previous one."
+                    : "Add ≥2 included chips that were added via the People tab \"+ Gallery\" button to enable ordering modes."}
             >
-                <input
-                    type="checkbox"
-                    checked={spatialActive}
-                    disabled={!canSpatial}
-                    onChange={e => onChange({faceSpatial: e.target.checked})}
-                />
-                ordered left → right
-                {!canSpatial && include.length > 0 && !allIncludesAreClusters && (
+                <span>Match:</span>
+                <label style={{display: "flex", alignItems: "center", gap: 4}}>
+                    <input
+                        type="radio"
+                        checked={!orderActive}
+                        onChange={() => onChange({faceSpatial: false, faceTemporal: false})}
+                    />
+                    same segment
+                </label>
+                <label style={{display: "flex", alignItems: "center", gap: 4, opacity: canOrder ? 1 : 0.5}}>
+                    <input
+                        type="radio"
+                        checked={spatialActive}
+                        disabled={!canOrder}
+                        onChange={() => onChange({faceSpatial: true, faceTemporal: false})}
+                    />
+                    left → right
+                </label>
+                <label style={{display: "flex", alignItems: "center", gap: 4, opacity: canOrder ? 1 : 0.5}}>
+                    <input
+                        type="radio"
+                        checked={temporalActive}
+                        disabled={!canOrder}
+                        onChange={() => onChange({faceTemporal: true, faceSpatial: false})}
+                    />
+                    sequence
+                </label>
+                {temporalActive && (
+                    <label style={{display: "flex", alignItems: "center", gap: 4}}>
+                        within
+                        <input
+                            type="number" min={1}
+                            value={block.faceTemporalWindowS ?? 20}
+                            onChange={e => onChange({faceTemporalWindowS: Math.max(1, Number(e.target.value) || 20)})}
+                            style={{width: 56}}
+                        />
+                        s
+                    </label>
+                )}
+                {!canOrder && include.length > 0 && !allIncludesAreClusters && (
                     <span style={{color: "#b45309"}}>
-                        — disabled: some included faces aren't clusters
+                        — ordering disabled: some included faces aren't clusters
                     </span>
                 )}
-            </label>
+            </div>
 
-            {/* Spatial-active: show ordered, draggable include row */}
-            {spatialActive && (
+            {/* Ordering active: show ordered, draggable include row */}
+            {orderActive && (
                 <div style={{
                     marginBottom: 10, padding: "6px 8px",
                     background: "#f6f6f6", borderRadius: 8,
                 }}>
                     <p style={{fontSize: 11, color: "#888", marginBottom: 6}}>
-                        Drag to reorder
+                        {spatialActive ? "Drag to set the left → right order" : "Drag to set the sequence order (first → last)"}
                     </p>
                     <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
                         <SortableContext items={include} strategy={horizontalListSortingStrategy}>
@@ -399,9 +439,9 @@ function FaceBlockChips({block, onChange, faceGallery}: {
                 {galleryNames.map(name => {
                     const inc = includeSet.has(name);
                     const exc = excludeSet.has(name);
-                    /* When spatial is on, included chips live in the sortable row above —
-                       hide them from this list to avoid double-rendering. */
-                    if (spatialActive && inc) return null;
+                    /* When an ordering mode is on, included chips live in the sortable row
+                       above — hide them from this list to avoid double-rendering. */
+                    if (orderActive && inc) return null;
                     return (
                         <div key={name} className={`fs-chip${inc ? " fs-chip--include" : ""}${exc ? " fs-chip--exclude" : ""}`}>
                             <span className="fs-chip__label">{name}</span>

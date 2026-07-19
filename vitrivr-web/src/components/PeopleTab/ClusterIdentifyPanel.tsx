@@ -18,12 +18,12 @@ import {useSearch} from "../../state/SearchContext.tsx";
 import Flash from "../QueryBuilderComponents/Flash.tsx";
 
 /* Cosine bands for cluster-to-candidate similarity:
-   - green (≥ 0.5): same identity is the standard call.
-   - yellow (≥ 0.3, < 0.5): plausible but worth eyeballing — could be a pose/lighting edge case
+   - green (≥ 0.3): same identity is the standard call.
+   - yellow (≥ 0.1, < 0.3): plausible but worth eyeballing — could be a pose/lighting edge case
      or the wrong person at a glancing similarity.
-   - below 0.3: not a real match; goes to the "Unmatched" bucket for deletion. */
-const STRONG_THRESHOLD = 0.5;
-const WEAK_THRESHOLD = 0.3;
+   - below 0.1: not a real match; goes to the "Unmatched" bucket for deletion. */
+const STRONG_THRESHOLD = 0.3;
+const WEAK_THRESHOLD = 0.1;
 
 /** Visual style applied to a matched row based on its similarity band. */
 function bandStyle(sim: number): React.CSSProperties {

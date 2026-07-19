@@ -180,6 +180,12 @@ export type ClusterMatchRequest = {
     exclude?: string[];
     spatialOrder?: string[];
     axis?: "x" | "y";
+    /** Ordered clusterIds: each next person's appearance must begin within temporalWindowS
+        after the previous person's anchor. Server-side; mutually exclusive with spatialOrder.
+        Returned segments are the LAST person's (the sequence-completion event). */
+    temporalOrder?: string[];
+    temporalWindowS?: number;
+    temporalAnchor?: "start" | "end";
     limit?: number;
 };
 
@@ -305,7 +311,7 @@ export type ClusterTimelineSegment = {
 export type ClusterTimelineVideo = {
     sourceId: string;
     filePath?: string | null;
-    /** Max endNs across this video's segments; used as the lane's right-edge scale. TODO: change to actual video duration */
+    /** Max endNs across this video's segments; used as the lane's right-edge scale. */
     lastAppearanceNs: number;
     segments: ClusterTimelineSegment[];
 };

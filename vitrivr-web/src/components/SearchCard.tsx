@@ -128,7 +128,9 @@ export type BlockState = {
     file: File | null;
     faceInclude?: string[];
     faceExclude?: string[];
-    faceSpatial?: boolean;
+        faceSpatial?: boolean;
+    faceTemporal?: boolean;
+    faceTemporalWindowS?: number;
 };
 
 const modalityOptions =
@@ -301,7 +303,7 @@ function mediaFrom(schema: string, resp: RetrievablesResponse): MediaItem[] {
         const end = nsToSecondsMaybe(endRaw);
 
         if (kind === "video") {
-            const {url, thumbUrl} = buildSegmentMediaUrls(schema, r);
+            const {url, thumbUrl, label} = buildSegmentMediaUrls(schema, r);
 
             if (!url) {
                 debugLog("drop: video without file.path", {idx, id, type: r.type, r});
@@ -316,7 +318,7 @@ function mediaFrom(schema: string, resp: RetrievablesResponse): MediaItem[] {
                 thumbUrl,
                 start,
                 end,
-                name: videoNameFromUrl(url),
+                name: label ?? videoNameFromUrl(url),
                 clipVector: pickFloatArray(r as any, "clip.vector"),
             };
         }
@@ -527,13 +529,15 @@ export function SearchCard() {
                         excCids.every((c): c is string => !!c);
 
                     if (allHaveClusterIds && inc.length > 0) {
+                        const useTemporal = !!fb.faceTemporal && inc.length >= 2;
+                        const useSpatial = !useTemporal && !!fb.faceSpatial && inc.length >= 2;
                         const resp = await matchClusters({
                             include: incCids as string[],
                             exclude: excCids as string[],
-                            spatialOrder: (fb.faceSpatial && inc.length >= 2)
-                                ? incCids as string[]
-                                : undefined,
+                            spatialOrder: useSpatial ? incCids as string[] : undefined,
                             axis: "x",
+                            temporalOrder: useTemporal ? incCids as string[] : undefined,
+                            temporalWindowS: useTemporal ? (fb.faceTemporalWindowS ?? 20) : undefined,
                             limit: 1000,
                         });
                         const map: FaceResultMap = new Map();
@@ -553,7 +557,7 @@ export function SearchCard() {
                         }
                         blockMaps.push(map);
                         console.log(
-                            `[Search] face fast-path${fb.faceSpatial ? " (spatial)" : ""}:` +
+                            `[Search] face fast-path${useSpatial ? " (spatial)" : useTemporal ? " (temporal)" : ""}:` +
                             ` ${resp.results.length}/${resp.total} segments`
                         );
                     } else {

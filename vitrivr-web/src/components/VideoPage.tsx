@@ -42,8 +42,8 @@
 
 
 "use client";
-import {useNavigate, useParams} from "react-router-dom";
-import {thumbnailUrl, buildVectorQuery, servedVideoUrl} from "../lib/vitrivr";
+import {useLocation, useNavigate, useParams} from "react-router-dom";
+import {thumbnailUrl, buildVectorQuery, servedVideoUrl, sourceLabel} from "../lib/vitrivr";
 import {useSearch} from "../state/SearchContext";
 import {useEffect, useMemo, useRef, useState} from "react";
 import {useAuth} from "../state/AuthContext";
@@ -65,6 +65,17 @@ type MediaItem = {
     rawType?: string;
     clipVector?: number[];
 };
+
+/** Fallback playback info carried on the router Link (see ResultItem / ClusterDetail).
+    Lets this page work for segments that never went through a search (People tab links),
+    where the SearchContext has no item and no clip vector. */
+type VideoLinkState = {
+    src?: string;
+    poster?: string;
+    start?: number;
+    end?: number;
+    name?: string;
+} | null;
 
 type RetrievablesResponse = {
     retrievables?: Array<{
@@ -135,6 +146,16 @@ function videoNameFromUrl(url: string): string {
     }
 }
 
+/** "day1 / Allie / 08.mp4" from a served video URL (the path contains the day/camera folders). */
+function labelFromUrl(url: string): string {
+    try {
+        const u = new URL(url, window.location.origin);
+        return sourceLabel(decodeURIComponent(u.pathname)) || videoNameFromUrl(url);
+    } catch {
+        return videoNameFromUrl(url);
+    }
+}
+
 function formatTimestamp(seconds: number): string {
     const totalMs = Math.max(0, Math.round(seconds * 1000));
     const hours = Math.floor(totalMs / 3_600_000);
@@ -197,6 +218,7 @@ function mapNeighbors(schema: string, resp: RetrievablesResponse): MediaItem[] {
 export default function VideoPage() {
     const navigate = useNavigate();
     const {id} = useParams<{ id: string }>();
+    const linkState = (useLocation().state ?? null) as VideoLinkState;
     const videoRef = useRef<HTMLVideoElement | null>(null);
 
     const {items, schema, setVectorsById, vectorsById, setItems} = useSearch();
@@ -213,12 +235,13 @@ export default function VideoPage() {
     const [neighborsLoading, setNeighborsLoading] = useState(false);
     const [neighborsError, setNeighborsError] = useState<string | null>(null);
 
-    const poster = id ? thumbnailUrl(schema, id) ?? "" : "";
+    const poster = (id ? thumbnailUrl(schema, id) : "") || linkState?.poster || "";
 
-    const src = item?.url ?? "";
-    const start = item?.start ?? 0;
+    /* Context item first (search flow), then the router link state (People tab / cluster flow). */
+    const src = item?.url || linkState?.src || "";
+    const start = item?.start ?? linkState?.start ?? 0;
     // const end = item?.end ?? 0; // TODO remove
-    const name = item?.name ?? (src ? videoNameFromUrl(src) : id ?? "");
+    const name = item?.name || linkState?.name || (src ? labelFromUrl(src) : id ?? "");
     const formattedStart = formatTimestamp(start);
 
     const currentVector = useMemo(() => {
@@ -289,8 +312,10 @@ export default function VideoPage() {
         async function loadNeighbors() {
             if (!id) return;
             if (!currentVector || currentVector.length === 0) {
+                /* Expected whenever the segment didn't come from a CLIP search (People tab links)
+                   or the schema is CLIP-free, no neighbor search available. */
                 setNeighbors([]);
-                setNeighborsError("No clip.vector found for this segment (did you store vectorsById during search?).");
+                setNeighborsError(null);
                 return;
             }
 
@@ -472,15 +497,28 @@ export default function VideoPage() {
                 </div>
             </header>
 
-            <video
-                key={id}
-                ref={videoRef}
-                src={src}
-                poster={poster}
-                controls
-                preload="metadata"
-                style={{width: "100%", maxWidth: 960, borderRadius: 12, background: "#000"}}
-            />
+            {src ? (
+                <video
+                    key={id}
+                    ref={videoRef}
+                    src={src}
+                    poster={poster}
+                    controls
+                    preload="metadata"
+                    style={{width: "100%", maxWidth: 960, borderRadius: 12, background: "#000"}}
+                />
+            ) : (
+                <div style={{
+                    width: "100%", maxWidth: 960, borderRadius: 12, border: "1px solid #ddd",
+                    background: "#fafafa", padding: 24, display: "grid", gap: 8,
+                    justifyItems: "center",
+                }}>
+                    {poster && <img src={poster} alt={name} style={{maxWidth: "100%", borderRadius: 8}}/>}
+                    <span style={{opacity: 0.7, fontSize: 13}}>
+                        No playable source for this segment — its origin view didn't provide a video path.
+                    </span>
+                </div>
+            )}
             <div
                 style={{
                     display: "inline-flex",
@@ -504,7 +542,14 @@ export default function VideoPage() {
                 {neighborsLoading && <div style={{opacity: 0.8}}>Loading neighbors…</div>}
                 {neighborsError && <div style={{color: "#b00020"}}>{neighborsError}</div>}
 
-                {!neighborsLoading && !neighborsError && neighbors.length === 0 && (
+                {!neighborsLoading && !neighborsError && (!currentVector || currentVector.length === 0) && (
+                    <div style={{opacity: 0.7}}>
+                        Neighbor search needs a CLIP vector from a search result — not available for this
+                        segment (face-only schemas have no CLIP data).
+                    </div>
+                )}
+                {!neighborsLoading && !neighborsError && currentVector && currentVector.length > 0
+                    && neighbors.length === 0 && (
                     <div style={{opacity: 0.7}}>No neighbors found.</div>
                 )}
 

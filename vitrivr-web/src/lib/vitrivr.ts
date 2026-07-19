@@ -60,6 +60,39 @@ function basenameFromPath(p: string): string {
 }
 
 /**
+ * Structured, readable label for a CASTLE source path.
+ * Uses day/camera/filename structure to disambiguate recurring filenames.
+ */
+export type SourceLabel = {
+    day?: string;
+    camera?: string;
+    filename: string;
+    videoNo?: string;
+    label: string;
+};
+
+export function describeSourcePath(p?: string | null): SourceLabel {
+    const parts = (p ?? "").replace(/\\/g, "/").split("/").filter(Boolean);
+    const filename = parts.length ? parts[parts.length - 1] : "";
+    const dayIdx = parts.findIndex((s) => /^day\d+$/i.test(s));
+    const day = dayIdx >= 0 ? parts[dayIdx].toLowerCase() : undefined;
+    const camera = dayIdx >= 0
+        ? (parts.slice(dayIdx + 1, parts.length - 1)
+            .filter((s) => !/^videos?$/i.test(s))
+            .join("/") || undefined)
+        : undefined;
+    const stem = filename.replace(/\.[^.]+$/, "");
+    const videoNo = stem.match(/(\d+)$/)?.[1];
+    const label = [day, camera, filename].filter(Boolean).join(" / ") || filename;
+    return {day, camera, filename, videoNo, label};
+}
+
+/** Compact one-line source label ("day1 / <camera> / <file>"); falls back to the filename. */
+export function sourceLabel(p?: string | null): string {
+    return describeSourcePath(p).label;
+}
+
+/**
  * Builds a public video URL from a source file path. 
  * Changed
  *
@@ -120,11 +153,13 @@ export function pickFilePath(r: VitrivrRetrievable): string | undefined {
     return undefined;
 }
 
+/** "day1 / <camera> / <file>" — for current CASTLE structure. */
 export type BuiltMediaUrls = {
     url: string;
     thumbUrl: string;
     filePath?: string;
     filename?: string;
+    label?: string;
 };
 
 /**
@@ -140,8 +175,9 @@ export function buildSegmentMediaUrls(schema: string, r: VitrivrRetrievable): Bu
     const url = filePath ? servedVideoUrl(schema, filePath) : "";
     const thumbUrl = id ? thumbnailUrl(schema, id) : "";
     const filename = filePath ? basenameFromPath(filePath) : undefined;
+    const label = filePath ? sourceLabel(filePath) : undefined;
 
-    return {url, thumbUrl, filePath: filePath ?? undefined, filename};
+    return {url, thumbUrl, filePath: filePath ?? undefined, filename, label};
 }
 
 

@@ -26,14 +26,26 @@ function activeSchema(): string {
 
 /* Pick the descriptor-server endpoint matching the active schema's face model.
    The query embedding MUST come from the same model that produced the stored
-   `face` descriptors — ArcFace and FaceNet are both 512-d but live in different
+   'face' descriptors — the models share dimensionality but live in different
    vector spaces, so a mismatch yields meaningless cosine distances (no error).
    Pragmatic heuristic on the schema name; the robust version would introspect the
-   schema's face-field analyser via the engine. */
+   schema's face-field analyser via the engine.
+
+   First matching hint wins, so more specific hints must precede their substrings
+   Defaults to arcface in case of no hint */
+const MODEL_ENDPOINT_HINTS: ReadonlyArray<readonly [string, string]> = [
+    ["ghost", "/extract/face_embedding_ghostfacenet"],
+    ["facenet", "/extract/face_embedding_facenet"],
+    ["sface", "/extract/face_embedding_sface"],
+    ["adaface", "/extract/face_embedding_adaface"],
+];
+
 function faceEmbeddingEndpoint(): string {
-    return activeSchema().toLowerCase().includes("facenet")
-        ? "/extract/face_embedding_facenet"
-        : "/extract/face_embedding";
+    const s = activeSchema().toLowerCase();
+    for (const [hint, endpoint] of MODEL_ENDPOINT_HINTS) {
+        if (s.includes(hint)) return endpoint;
+    }
+    return "/extract/face_embedding";
 }
 
 async function fileToBase64DataUrl(file: File): Promise<string> {
@@ -285,7 +297,7 @@ export function faceMapToMediaItems(schema: string, map: FaceResultMap): FaceMed
            Fall back to face id if partOf is missing, so we at least render something. */
         const parent = item.raw.relationship?.partOf;
         const segmentId = (parent?.id ?? item.retrievableId).trim();
-        const {url, thumbUrl, filename} = buildSegmentMediaUrls(
+        const {url, thumbUrl, filename, label} = buildSegmentMediaUrls(
             schema,
             parent ? {...parent, id: segmentId} as VitrivrRetrievable : item.raw,
         );
@@ -294,7 +306,7 @@ export function faceMapToMediaItems(schema: string, map: FaceResultMap): FaceMed
             id: segmentId,
             url,
             thumbUrl: thumbUrl || thumbnailUrl(schema, segmentId),
-            name: filename ?? "",
+            name: label ?? filename ?? "",
             start: item.startNs / 1_000_000_000,
             end: item.endNs / 1_000_000_000,
             score: item.score,
