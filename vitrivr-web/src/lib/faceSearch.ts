@@ -1,5 +1,6 @@
 import {retrieval} from "../vitirvr/api/client";
-import {buildSegmentMediaUrls, thumbnailUrl, type VitrivrRetrievable} from "./vitrivr";
+import {buildSegmentMediaUrls, servedVideoUrl, sourceLabel, thumbnailUrl, type VitrivrRetrievable} from "./vitrivr";
+import {fetchSegmentInfo} from "./segments";
 
 export const FACE_SERVER_URL =
     (import.meta.env.VITE_FACE_SERVER_URL as string | undefined) ?? "http://127.0.0.1:8888";
@@ -315,4 +316,28 @@ export function faceMapToMediaItems(schema: string, map: FaceResultMap): FaceMed
 
     items.sort((a, b) => b.score - a.score);
     return items;
+}
+
+/**
+ * Fills in url / name / start / end from the engine's bulk segment-info endpoint.
+ */
+export async function enrichFaceMediaItems(schema: string, items: FaceMediaItem[]): Promise<FaceMediaItem[]> {
+    if (items.length === 0) return items;
+    try {
+        const info = await fetchSegmentInfo(items.map(i => i.id));
+        return items.map(i => {
+            const s = info.get(i.id);
+            if (!s) return i;
+            return {
+                ...i,
+                url: s.filePath ? servedVideoUrl(schema, s.filePath) : i.url,
+                name: s.filePath ? sourceLabel(s.filePath) : i.name,
+                start: s.startNs != null ? s.startNs / 1e9 : i.start,
+                end: s.endNs != null ? s.endNs / 1e9 : i.end,
+            };
+        });
+    } catch (e) {
+        console.warn("[faceSearch] segment-info enrichment failed; items left as-is", e);
+        return items;
+    }
 }

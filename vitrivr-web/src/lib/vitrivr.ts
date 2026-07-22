@@ -448,9 +448,15 @@ export function buildTextQuery(
     field: string,
     prompt: string,
     emotions: string = "",
-    emotionType: string = ""
+    emotionType: string = "",
+    /** 'limit': how many segments the ranking returns — raise it when the result set is
+        afterwards intersected with a face constraint, since two independently truncated
+        top-k lists rarely overlap. 'withVectors': attach each result's CLIP vector
+        (needed for neighbour navigation, but heavy at large limits). */
+    options: {limit?: number; withVectors?: boolean} = {}
 ) {
-    const LIMIT = "1000";
+    const LIMIT = String(options.limit ?? 1000);
+    const withVectors = options.withVectors ?? true;
 
     let emotionField = "emotionssound";
     if (emotionType === "face") emotionField = "emotionsface";
@@ -538,7 +544,7 @@ export function buildTextQuery(
         },
     };
 
-    const output = addSegmentToFileLookups(operations, "clip");
+    const output = addSegmentToFileLookups(operations, "clip", withVectors);
     return {inputs, operations, output} as const;
 }
 
@@ -607,7 +613,7 @@ type Ops = Record<string, unknown>;
 /**
  * Append the standard lookup chain.
  */
-function addSegmentToFileLookups(operations: Ops, inputOp: string) {
+function addSegmentToFileLookups(operations: Ops, inputOp: string, withVectors = true) {
     operations["relations"] = {
         factory: "RelationExpander",
         inputs: {in: inputOp},
@@ -625,15 +631,19 @@ function addSegmentToFileLookups(operations: Ops, inputOp: string) {
         parameters: {field: "time", keys: "start, end"},
     };
 
-    operations["desclookup"] = {
-        factory: "FieldLookup",
-        inputs: {in: "timelookup"},
-        parameters: {field: "clip", keys: "descriptord"},
-    };
+    /* The vector lookup adds a 512-d descriptor to every result; at the large limits used
+       for face-filtered queries that dominates the response size, so it is optional. */
+    if (withVectors) {
+        operations["desclookup"] = {
+            factory: "FieldLookup",
+            inputs: {in: "timelookup"},
+            parameters: {field: "clip", keys: "descriptord"},
+        };
+    }
 
     operations["filelookup"] = {
         factory: "ObjectFieldLookup",
-        inputs: {in: "desclookup"},
+        inputs: {in: withVectors ? "desclookup" : "timelookup"},
         parameters: {field: "file", predicates: "partOf", keys: "path"},
     };
 

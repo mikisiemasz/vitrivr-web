@@ -58,7 +58,7 @@ import {
 } from "../lib/vitrivr.ts";
 import {matchClusters} from "../lib/clusters";
 import {
-    queryFaceVector, intersectMaps, subtractMaps, faceMapToMediaItems,
+    queryFaceVector, intersectMaps, subtractMaps, faceMapToMediaItems, enrichFaceMediaItems,
     type FaceResultMap,
 } from "../lib/faceSearch.ts";
 import {retrieval} from "../vitirvr/api/client";
@@ -77,6 +77,17 @@ const PAGE_SIZE = 100;
 const DEBUG = (import.meta.env.VITE_DEBUG ?? "").toString() === "1";
 const RAW_TRUNCATE = 100_000;
 const FACE_LIMIT = 500;
+
+/* Combining a face block with a text block intersects two independently truncated result
+   lists, so with default limits the overlap is near zero on a large collection. When both
+   are present the identity side fetches (nearly) all of a person's segments and the text
+   side ranks much deeper; the intersection is then meaningful. Identity results are used
+   only as an id filter here, so the larger limits cost no rendering work. */
+const COMBINED_MATCH_LIMIT = 20000;
+const COMBINED_FACE_LIMIT = 5000;
+const COMBINED_TEXT_LIMIT = 10000;
+/* Cap for the identity-only fallback: enrichment resolves at most 2000 segments per call. */
+const FALLBACK_DISPLAY_LIMIT = 500;
 
 type QueryType = Extract<BlockState['queryType'], string>;
 type Modality = "clip" | "emotions" | "ocr" | "asr" | "face";
@@ -128,7 +139,7 @@ export type BlockState = {
     file: File | null;
     faceInclude?: string[];
     faceExclude?: string[];
-        faceSpatial?: boolean;
+    faceSpatial?: boolean;
     faceTemporal?: boolean;
     faceTemporalWindowS?: number;
 };
@@ -515,6 +526,10 @@ export function SearchCard() {
 
 
         try {
+            /* Both modalities present: identity acts as a filter over a deeply ranked text
+               result set, so both sides are fetched with raised limits. */
+            const combining = faceBlocks.length > 0 && nonFaceBlocks.length > 0;
+
             let faceFinalMap: FaceResultMap | null = null;
             if (faceBlocks.length > 0) {
                 const blockMaps: FaceResultMap[] = [];
@@ -538,7 +553,7 @@ export function SearchCard() {
                             axis: "x",
                             temporalOrder: useTemporal ? incCids as string[] : undefined,
                             temporalWindowS: useTemporal ? (fb.faceTemporalWindowS ?? 20) : undefined,
-                            limit: 1000,
+                            limit: combining ? COMBINED_MATCH_LIMIT : 1000,
                         });
                         const map: FaceResultMap = new Map();
                         for (const hit of resp.results) {
@@ -561,9 +576,10 @@ export function SearchCard() {
                             ` ${resp.results.length}/${resp.total} segments`
                         );
                     } else {
+                        const annLimit = combining ? COMBINED_FACE_LIMIT : FACE_LIMIT;
                         const [iMaps, eMaps] = await Promise.all([
-                            Promise.all(inc.map(n => queryFaceVector(faceGallery[n].embedding, schema, FACE_LIMIT))),
-                            Promise.all(exc.map(n => queryFaceVector(faceGallery[n].embedding, schema, FACE_LIMIT))),
+                            Promise.all(inc.map(n => queryFaceVector(faceGallery[n].embedding, schema, annLimit))),
+                            Promise.all(exc.map(n => queryFaceVector(faceGallery[n].embedding, schema, annLimit))),
                         ]);
                         blockMaps.push(subtractMaps(intersectMaps(iMaps), eMaps));
                     }
@@ -573,6 +589,11 @@ export function SearchCard() {
 
             let media: MediaItem[] = [];
             if (nonFaceBlocks.length > 0) {
+                /* Rank deeper when a face filter follows, and drop the per-result CLIP
+                   vectors that would otherwise dominate the payload at that depth. */
+                const textQueryOptions = combining
+                    ? {limit: COMBINED_TEXT_LIMIT, withVectors: false}
+                    : {};
                 let resp;
 
                 if (nonFaceBlocks.length == 1) {
@@ -584,7 +605,7 @@ export function SearchCard() {
                             setFlash({show: true, message: "Please select an emotion."});
                             return;
                         }
-                        const body = buildTextQuery("emotions", "", chosen, b.emotionTarget);
+                        const body = buildTextQuery("emotions", "", chosen, b.emotionTarget, textQueryOptions);
                         console.log("Building emotions query")
                         // eslint-disable-next-line @typescript-eslint/ban-ts-comment
                         // @ts-expect-error
@@ -592,13 +613,13 @@ export function SearchCard() {
 
                     } else if (b.queryType === "image") {
                         const base64image = await fileToBase64(b.file);
-                        const body = buildTextQuery(b.modality, base64image);
+                        const body = buildTextQuery(b.modality, base64image, "", "", textQueryOptions);
                         // eslint-disable-next-line @typescript-eslint/ban-ts-comment
                         // @ts-expect-error
                         resp = await retrieval.postExecuteQuery(schema, body);
 
                     } else {
-                        const body = buildTextQuery(b.modality.trim(), b.textQuery.trim());
+                        const body = buildTextQuery(b.modality.trim(), b.textQuery.trim(), "", "", textQueryOptions);
                         // eslint-disable-next-line @typescript-eslint/ban-ts-comment
                         // @ts-expect-error
                         resp = await retrieval.postExecuteQuery(schema, body);
@@ -621,9 +642,28 @@ export function SearchCard() {
 
             if (faceFinalMap && nonFaceBlocks.length > 0) {
                 const faceIds = new Set(faceFinalMap.keys());
-                media = media.filter(i => faceIds.has(i.id));
+                const intersected = media.filter(i => faceIds.has(i.id));
+                if (intersected.length === 0 && faceFinalMap.size > 0) {
+                    /* The two rankings still did not overlap. Showing the identity matches
+                       alone is more useful than an empty page, but it is a different query,
+                       so it is announced explicitly. */
+                    const fallback = faceMapToMediaItems(schema, faceFinalMap).slice(0, FALLBACK_DISPLAY_LIMIT);
+                    media = (await enrichFaceMediaItems(schema, fallback)).map(fi => ({
+                        id: fi.id, kind: "video" as const, name: fi.name,
+                        url: fi.url, thumbUrl: fi.thumbUrl, start: fi.start, end: fi.end,
+                    }));
+                    setFlash({
+                        show: true,
+                        message: "No segment matched both the text query and the selected people — showing the identity matches only.",
+                    });
+                } else {
+                    media = intersected;
+                }
             } else if (faceFinalMap) {
-                media = faceMapToMediaItems(schema, faceFinalMap).map(fi => ({
+                /* ANN face results carry no file.path / time (query pipeline limitation);
+                   resolve them in bulk before building display items. */
+                const enriched = await enrichFaceMediaItems(schema, faceMapToMediaItems(schema, faceFinalMap));
+                media = enriched.map(fi => ({
                     id: fi.id, kind: "video" as const, name: fi.name,
                     url: fi.url, thumbUrl: fi.thumbUrl, start: fi.start, end: fi.end,
                 }));

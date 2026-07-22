@@ -44,6 +44,7 @@
 "use client";
 import {useLocation, useNavigate, useParams} from "react-router-dom";
 import {thumbnailUrl, buildVectorQuery, servedVideoUrl, sourceLabel} from "../lib/vitrivr";
+import {fetchSegmentInfo} from "../lib/segments";
 import {useSearch} from "../state/SearchContext";
 import {useEffect, useMemo, useRef, useState} from "react";
 import {useAuth} from "../state/AuthContext";
@@ -237,11 +238,39 @@ export default function VideoPage() {
 
     const poster = (id ? thumbnailUrl(schema, id) : "") || linkState?.poster || "";
 
+    /* Last-resort playback info from the engine's segment-info endpoint — covers page refresh
+       and origin views that couldn't provide a path. Only queried when nothing else has a src. */
+    const [fetchedInfo, setFetchedInfo] = useState<{src: string; name: string; start: number} | null>(null);
+
     /* Context item first (search flow), then the router link state (People tab / cluster flow). */
-    const src = item?.url || linkState?.src || "";
-    const start = item?.start ?? linkState?.start ?? 0;
+    const baseSrc = item?.url || linkState?.src || "";
+
+    useEffect(() => {
+        setFetchedInfo(null);
+        if (!id || baseSrc) return;
+        let cancelled = false;
+        (async () => {
+            try {
+                const m = await fetchSegmentInfo([id]);
+                const s = m.get(id);
+                if (!cancelled && s?.filePath) {
+                    setFetchedInfo({
+                        src: servedVideoUrl(schema, s.filePath),
+                        name: sourceLabel(s.filePath),
+                        start: (s.startNs ?? 0) / 1e9,
+                    });
+                }
+            } catch {
+                // Best-effort: the no-source placeholder stays if this fails too.
+            }
+        })();
+        return () => { cancelled = true; };
+    }, [id, schema, baseSrc]);
+
+    const src = baseSrc || fetchedInfo?.src || "";
+    const start = item?.start ?? linkState?.start ?? fetchedInfo?.start ?? 0;
     // const end = item?.end ?? 0; // TODO remove
-    const name = item?.name || linkState?.name || (src ? labelFromUrl(src) : id ?? "");
+    const name = item?.name || linkState?.name || fetchedInfo?.name || (src ? labelFromUrl(src) : id ?? "");
     const formattedStart = formatTimestamp(start);
 
     const currentVector = useMemo(() => {
